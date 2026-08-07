@@ -1,5 +1,18 @@
 const TOKEN_KEY = "childlife.token";
 
+/**
+ * Empty by default, which keeps every call relative ("/api/...") — the right thing
+ * both in dev (Vite proxies) and on Vercel (vercel.json rewrites), because the
+ * browser then sees one origin and CORS never applies.
+ *
+ * Set VITE_API_BASE_URL only to point straight at the backend instead. That is
+ * cross-origin, so the deploying origin must also be added to CORS_ORIGINS in
+ * backend/.env. Vite inlines this at BUILD time, so changing it needs a redeploy.
+ */
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
+const url = (path) => `${API_BASE}${path}`;
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -18,7 +31,7 @@ class ApiError extends Error {
 
 async function request(path, options = {}) {
   const token = getToken();
-  const res = await fetch(path, {
+  const res = await fetch(url(path), {
     ...options,
     headers: {
       ...(options.headers || {}),
@@ -47,7 +60,7 @@ async function request(path, options = {}) {
 
 export async function login(username, password) {
   const body = new URLSearchParams({ username, password });
-  const res = await fetch("/api/auth/login", { method: "POST", body });
+  const res = await fetch(url("/api/auth/login"), { method: "POST", body });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));
     throw new ApiError(detail?.detail || "Sign in failed", res.status);
