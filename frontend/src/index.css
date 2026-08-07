@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/* Design tokens. Light values live on bare :root; dark is redefined under both the
+   OS media query and an explicit [data-theme] stamp so the in-app toggle wins in
+   either direction. */
+:root {
+  color-scheme: light;
+
+  --page:            #f9f9f7;
+  --surface:         #fcfcfb;
+  --surface-raised:  #ffffff;
+  --surface-sunken:  #f2f1ee;
+
+  --text-primary:    #0b0b0b;
+  --text-secondary:  #52514e;
+  --text-muted:      #898781;
+
+  --border:          rgba(11, 11, 11, 0.10);
+  --border-strong:   rgba(11, 11, 11, 0.18);
+  --grid:            #e1e0d9;
+  --axis:            #c3c2b7;
+
+  /* Categorical slots — chroma pulled to ~70% of full strength for a softer read.
+     Lightness spread is preserved deliberately: flattening every hue to one lightness
+     is what kills CVD separation. Validated light: normal-vision ΔE 19.4, CVD 6.5
+     (6–8 band, legal because every bar is direct-labelled). */
+  --series-1: #497abb;
+  --series-2: #d47a59;
+  --series-3: #55a882;
+
+  /* Single hue for the breakdown bars. Each bar is named, so color carries no
+     identity — one calm hue beats a cycled set. */
+  --bar: #588dd0;
+
+  /* Status — reserved, never reused as a series color. Softened to match, and always
+     shipped with an icon + label so hue never carries meaning alone. */
+  --good:     #60a65b;
+  --warning:  #e2b670;
+  --serious:  #dd9878;
+  --critical: #c06760;
+  /* Warning yellow measures 1.79:1 on the light surface — unusable as text, so badge
+     ink uses a darkened step of the same hue. */
+  --warning-ink: #8a6a2e;
+
+  --accent:        #4a7fc0;
+  --accent-hover:  #3c6aa3;
+  --accent-ink:    #ffffff;
+  --accent-wash:   rgba(74, 127, 192, 0.09);
+
+  --shadow-sm: 0 1px 2px rgba(11, 11, 11, 0.04);
+  --shadow-md: 0 2px 8px rgba(11, 11, 11, 0.06), 0 1px 2px rgba(11, 11, 11, 0.04);
+  --shadow-lg: 0 12px 32px rgba(11, 11, 11, 0.10), 0 2px 8px rgba(11, 11, 11, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --page:            #0d0d0d;
+    --surface:         #1a1a19;
+    --surface-raised:  #232322;
+    --surface-sunken:  #141413;
+
+    --text-primary:    #ffffff;
+    --text-secondary:  #c3c2b7;
+    --text-muted:      #898781;
+
+    --border:          rgba(255, 255, 255, 0.10);
+    --border-strong:   rgba(255, 255, 255, 0.18);
+    --grid:            #2c2c2a;
+    --axis:            #383835;
+
+    /* Same hues, stepped for the dark surface — not an automatic flip. */
+    --series-1: #5689ca;
+    --series-2: #c36b4c;
+    --series-3: #379b73;
+    --bar:      #5a8fd2;
+    --good:     #5aa055;
+    --warning:  #e2b670;
+    --serious:  #dd9878;
+    --critical: #ba615b;
+    --warning-ink: #e2b670;   /* clears 3:1 on the dark surface, so it carries itself */
+
+    --accent:        #6a9bd8;
+    --accent-hover:  #82ade0;
+    --accent-wash:   rgba(106, 155, 216, 0.15);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.36), 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.36);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page:            #0d0d0d;
+  --surface:         #1a1a19;
+  --surface-raised:  #232322;
+  --surface-sunken:  #141413;
+
+  --text-primary:    #ffffff;
+  --text-secondary:  #c3c2b7;
+  --text-muted:      #898781;
+
+  --border:          rgba(255, 255, 255, 0.10);
+  --border-strong:   rgba(255, 255, 255, 0.18);
+  --grid:            #2c2c2a;
+  --axis:            #383835;
+
+  --series-1: #5689ca;
+  --series-2: #c36b4c;
+  --series-3: #379b73;
+  --bar:      #5a8fd2;
+  --good:     #5aa055;
+  --warning:  #e2b670;
+  --serious:  #dd9878;
+  --critical: #ba615b;
+  --warning-ink: #e2b670;
+
+  --accent:        #6a9bd8;
+  --accent-hover:  #82ade0;
+  --accent-wash:   rgba(106, 155, 216, 0.15);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.36), 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.36);
+}
+
+* { border-color: var(--border); }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv05" 1;
+}
+
+/* Columns that must align vertically get tabular figures; standalone hero numbers
+   keep the default proportional set. */
+.tnum { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid var(--page);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-in { animation: fade-up 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in { animation: none; }
+  * { transition-duration: 0.01ms !important; }
+}

@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter, Depends
+
+from ..db import calls
+from ..reporting import AREAS, COMPLAINT_CATEGORIES, COMPLAINT_SUBCATEGORIES
+from ..security import current_user
+from .calls import build_filter
+
+router = APIRouter(prefix="/api/stats", tags=["stats"])
+
+
+async def _facet_counts(match: dict[str, Any], field: str) -> dict[str, int]:
+    pipeline = [
+        {"$match": match},
+        {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+    ]
+    out: dict[str, int] = {}
+    async for row in calls().aggregate(pipeline):
+        key = row["_id"]
+        if key in (None, ""):
+            continue
+        out[str(key)] = row["count"]
+    return out
+
+
+def _ordered(counts: dict[str, int], order: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Fixed order so a category keeps its color slot even when its count is zero."""
+    rows = [{"label": label, "value": counts.get(label, 0)} for label in order]
+    extras = sorted(
+        ((k, v) for k, v in counts.items() if k not in order),
+        key=lambda kv: -kv[1],
+    )
+    rows.extend({"label": k, "value": v} for k, v in extras)
+    return rows
+
+
+@router.get("/overview")
+async def overview(
+    days: int | None = None,
+    er: str | None = None,
+    direction: str | None = None,
+    _: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    match = build_filter(er=er, direction=direction, days=days)
+    collection = calls()
+
+    total = await collection.count_documents(match)
+    status_counts = await _facet_counts(match, "status")
+
+    # Totals for duration and cost in one pass.
+    totals = {"duration": 0.0, "cost": 0.0}
+    async for row in collection.aggregate(
+        [
+            {"$match": match},
+            {
+                "$group": {
+                    "_id": None,
+                    "duration": {"$sum": {"$ifNull": ["$duration", 0]}},
+                    "cost": {"$sum": {"$ifNull": ["$cost.total_cost", 0]}},
+                }
+            },
+        ]
+    ):
+        totals["duration"] = float(row.get("duration") or 0)
+        totals["cost"] = float(row.get("cost") or 0)
+
+    valid_complaints = await collection.count_documents(
+        {**match, "feedback_summary.is_valid_feedback": True}
+    )
+    support_required = await collection.count_documents(
+        {**match, "feedback_summary.support_required": True}
+    )
+    satisfied = status_counts.get("satisfied", 0)
+
+    # Calls per day for the trend line.
+    trend: list[dict[str, Any]] = []
+    async for row in collection.aggregate(
+        [
+            {"$match": match},
+            {
+                "$group": {
+                    "_id": {
+                        "$dateToString": {"format": "%Y-%m-%d", "date": "$timestamp"}
+                    },
+                    "calls": {"$sum": 1},
+                    "complaints": {
+                        "$sum": {
+                            "$cond": [
+                                {"$eq": ["$feedback_summary.is_valid_feedback", True]},
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+    ):
+        if row["_id"]:
+            trend.append(
+                {"date": row["_id"], "calls": row["calls"], "complaints": row["complaints"]}
+            )
+
+    er_counts = await _facet_counts(match, "patient_context.er_name")
+
+    return {
+        "kpis": {
+            "total_calls": total,
+            "valid_complaints": valid_complaints,
+            "satisfied": satisfied,
+            "support_required": support_required,
+            "total_minutes": round(totals["duration"], 1),
+            "avg_minutes": round(totals["duration"] / total, 2) if total else 0.0,
+            "total_cost_usd": round(totals["cost"], 4),
+        },
+        "status": _ordered(status_counts, ("answered", "satisfied", "silent", "unanswered")),
+        "categories": _ordered(
+            await _facet_counts(match, "feedback_summary.complaint_category"),
+            COMPLAINT_CATEGORIES,
+        ),
+        "subcategories": _ordered(
+            await _facet_counts(match, "feedback_summary.complaint_subcategory"),
+            COMPLAINT_SUBCATEGORIES,
+        ),
+        "areas": _ordered(
+            await _facet_counts(match, "feedback_summary.complaint_area"), AREAS
+        ),
+        "ers": sorted(
+            ({"label": k, "value": v} for k, v in er_counts.items()),
+            key=lambda r: -r["value"],
+        ),
+        "trend": trend,
+    }
