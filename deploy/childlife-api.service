@@ -1,0 +1,39 @@
+# Keeps the API running across reboots, instead of dying with the shell that
+# started it.
+#
+#   sudo cp deploy/childlife-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now childlife-api
+#   sudo systemctl status childlife-api
+#   journalctl -u childlife-api -f
+
+[Unit]
+Description=ChildLife reporting API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=mahausmani
+WorkingDirectory=/home/mahausmani/projects/childlife-reporting/backend
+
+# Bound to loopback deliberately: nginx is the only thing that should reach it,
+# and there is no TLS on this socket. Change to 0.0.0.0 only if something other
+# than a local reverse proxy needs it.
+ExecStart=/home/mahausmani/projects/childlife-reporting/backend/.venv/bin/python \
+    -m uvicorn app.main:app \
+    --host 127.0.0.1 --port 8003 \
+    --proxy-headers --forwarded-allow-ips='127.0.0.1'
+
+Restart=on-failure
+RestartSec=3
+
+# The app reads backend/.env itself; EnvironmentFile is not needed.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/mahausmani/projects/childlife-reporting
+
+[Install]
+WantedBy=multi-user.target
