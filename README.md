@@ -49,7 +49,8 @@ history):
 Run it:
 
 ```bash
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8003
+
 ```
 
 ### Frontend
@@ -57,7 +58,7 @@ Run it:
 ```bash
 cd frontend
 npm install
-npm run dev     # http://localhost:5174, proxies /api to :8000
+npm run dev     # http://localhost:5174, proxies /api to :8003
 ```
 
 For production, `npm run build` emits `dist/` — serve it behind nginx and point
