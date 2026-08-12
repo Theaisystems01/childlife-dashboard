@@ -82,20 +82,36 @@ export const api = {
   calls: (params) => json(`/api/calls?${new URLSearchParams(clean(params))}`),
   call: (id) => json(`/api/calls/${encodeURIComponent(id)}`),
   filters: () => json("/api/calls/filters"),
-  exportUrl: (params) => `/api/export/xlsx?${new URLSearchParams(clean(params))}`,
-  download: async (params) => {
-    const res = await request(api.exportUrl(params));
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `childlife-feedback-${new Date().toISOString().slice(0, 10)}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+  patients: (params) => json(`/api/patients?${new URLSearchParams(clean(params))}`),
+  queue: (params) => json(`/api/patients/queue?${new URLSearchParams(clean(params))}`),
+  batches: () => json("/api/patients/batches"),
+
+  uploadPatients: async (file) => {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await request("/api/patients/upload", { method: "POST", body });
+    return res.json();
   },
+
+  downloadTemplate: () => downloadFrom("/api/patients/template", "patient-upload-template.xlsx"),
+
+  exportUrl: (params) => `/api/export/xlsx?${new URLSearchParams(clean(params))}`,
+  download: (params) =>
+    downloadFrom(api.exportUrl(params), `childlife-feedback-${new Date().toISOString().slice(0, 10)}.xlsx`),
 };
+
+/** Fetches through request() so the auth header is attached, then saves the blob. */
+async function downloadFrom(path, filename) {
+  const res = await request(path);
+  const blobUrl = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
+}
 
 function clean(params = {}) {
   return Object.fromEntries(

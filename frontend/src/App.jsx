@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Calls from "./pages/Calls";
+import CallQueue from "./pages/CallQueue";
 
 const PAGES = {
   overview: {
@@ -16,6 +17,11 @@ const PAGES = {
     title: "Call records",
     description: "Every call in the foundation reporting format, searchable and exportable.",
     Component: Calls,
+  },
+  queue: {
+    title: "Call queue",
+    description: "Upload patient lists and track who still needs to be contacted.",
+    Component: CallQueue,
   },
 };
 

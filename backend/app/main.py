@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS, require_jwt_secret
 from .db import calls, close_client
-from .routers import auth, calls as calls_router, export, stats
+from .routers import auth, calls as calls_router, export, patients, stats
 
 
 @asynccontextmanager
@@ -39,6 +39,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(calls_router.router)
 app.include_router(stats.router)
+app.include_router(patients.router)
 app.include_router(export.router)
 
 

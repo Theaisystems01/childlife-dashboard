@@ -29,6 +29,14 @@ const Icon = {
       <path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none" />
     </>
   ),
+  queue: (
+    <>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <circle cx="3.5" cy="6" r="1.4" />
+      <circle cx="3.5" cy="12" r="1.4" />
+      <circle cx="3.5" cy="18" r="1.4" />
+    </>
+  ),
   signout: (
     <>
       <path d="M15 17l5-5-5-5" />
@@ -60,6 +68,7 @@ function Glyph({ name, size = 18 }) {
 const NAV = [
   { id: "overview", label: "Overview", icon: "overview", hint: "Trends and breakdowns" },
   { id: "calls", label: "Call records", icon: "calls", hint: "Every call, searchable" },
+  { id: "queue", label: "Call queue", icon: "queue", hint: "Who still needs calling" },
 ];
 
 export default function Sidebar({ tab, onTab, user, theme, onTheme, onSignOut }) {
