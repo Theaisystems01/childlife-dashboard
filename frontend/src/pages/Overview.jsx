@@ -77,11 +77,7 @@ export default function Overview({ filters }) {
           <Stat
             label="Cost"
             value={`Rs ${Number(kpis.total_cost_pkr || 0).toLocaleString("en-PK", { maximumFractionDigits: 0 })}`}
-            hint={
-              kpis.ai_minutes != null
-                ? `${Math.round(kpis.ai_minutes)}m AI · ${Math.round(kpis.menu_minutes || 0)}m menu`
-                : `$${(kpis.total_cost_usd || 0).toFixed(3)} provider spend`
-            }
+            hint={`${Math.round(kpis.ai_minutes || 0)}m AI · ${Math.round(kpis.menu_minutes || 0)}m menu`}
           />
         </StatStrip>
       )}

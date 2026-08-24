@@ -147,7 +147,6 @@ async def overview(
             "support_required": support_required,
             "total_minutes": round(totals["duration"], 1),
             "avg_minutes": round(totals["duration"] / total, 2) if total else 0.0,
-            "total_cost_usd": round(totals["cost"], 4),
             "total_cost_pkr": round(total_pkr, 2),
             "ai_minutes": round(ai_minutes, 2),
             "menu_minutes": round(menu_minutes, 2),

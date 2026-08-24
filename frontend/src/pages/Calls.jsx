@@ -327,14 +327,7 @@ function CallDetail({ sessionId, onClose }) {
                     </div>
                   </>
                 )}
-                <div className="contents">
-                  <dt style={{ color: "var(--text-muted)" }} title="Actual provider spend, stored in USD">
-                    Provider spend
-                  </dt>
-                  <dd className="tnum" style={{ color: "var(--text-muted)" }}>
-                    ${call.cost_usd?.toFixed(4)}
-                  </dd>
-                </div>
+
               </dl>
             </div>
 

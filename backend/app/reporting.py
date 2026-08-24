@@ -114,7 +114,6 @@ def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[s
     """Report row plus the operational fields the dashboard shows alongside it."""
     row = to_report_row(doc)
     summary = doc.get("feedback_summary") or {}
-    cost = doc.get("cost") or {}
 
     duration_minutes = round(float(doc.get("duration") or 0), 2)
     ai_minutes = round(float(doc.get("ai_duration") or 0), 2)
@@ -143,9 +142,9 @@ def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[s
         "ai_minutes": ai_minutes,
         "ai_engaged": bool(doc.get("ai_engaged")),
         "attempt": int(doc.get("attempt") or 1),
-        # Raw provider spend, exactly as the agent recorded it.
-        "cost_usd": round(float(cost.get("total_cost") or cost.get("total") or 0), 4),
-        # What the foundation is billed, which is a different number.
+        # Only the rupee figure crosses the wire. Raw USD provider spend stays in
+        # Mongo for internal margin reporting (scripts/margin_report.py in the agent
+        # repo) — it is deliberately not sent to the dashboard, which is the client's.
         "cost_pkr": pkr["total"],
         "cost_pkr_breakdown": pkr,
         "is_valid_feedback": bool(summary.get("is_valid_feedback")),
