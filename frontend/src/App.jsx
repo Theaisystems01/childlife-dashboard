@@ -6,6 +6,7 @@ import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Calls from "./pages/Calls";
 import CallQueue from "./pages/CallQueue";
+import Settings from "./pages/Settings";
 
 const PAGES = {
   overview: {
@@ -22,6 +23,11 @@ const PAGES = {
     title: "Call queue",
     description: "Upload patient lists and track who still needs to be contacted.",
     Component: CallQueue,
+  },
+  settings: {
+    title: "Settings",
+    description: "How and when outbound calls are placed.",
+    Component: Settings,
   },
 };
 

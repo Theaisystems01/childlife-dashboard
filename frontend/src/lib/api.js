@@ -86,6 +86,16 @@ export const api = {
   queue: (params) => json(`/api/patients/queue?${new URLSearchParams(clean(params))}`),
   batches: () => json("/api/patients/batches"),
 
+  settings: () => json("/api/settings"),
+  saveSettings: async (payload) => {
+    const res = await request("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.json();
+  },
+
   uploadPatients: async (file) => {
     const body = new FormData();
     body.append("file", file);
