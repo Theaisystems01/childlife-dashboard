@@ -55,6 +55,28 @@ class DialerSettings(BaseModel):
         False, description="Stop placing new calls without losing the queue"
     )
 
+    # --- costing -------------------------------------------------------------
+    # What the foundation is billed, in rupees. Separate from the raw USD provider
+    # spend the agent records, which stays untouched.
+    rate_carrier_pkr_per_min: float = Field(
+        2.15, ge=0, le=100, description="Carrier rate, applied to the whole call"
+    )
+    rate_ivr_pkr_per_min: float = Field(
+        0.80, ge=0, le=100, description="Menu-only minutes"
+    )
+    rate_ai_pkr_per_min: float = Field(
+        7.00, ge=0, le=500, description="Minutes spent with the AI"
+    )
+    carrier_bills_whole_minutes: bool = Field(
+        False,
+        description="Round carrier minutes up. UNCONFIRMED with Telecard — most "
+        "Pakistani carriers do, which roughly doubles the cost of a short call.",
+    )
+    charge_unanswered: bool = Field(
+        False,
+        description="Charge for calls that never connected. UNCONFIRMED with Telecard.",
+    )
+
     def validated(self) -> "DialerSettings":
         if self.calling_window_end_hour <= self.calling_window_start_hour:
             raise HTTPException(

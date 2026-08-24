@@ -176,6 +176,74 @@ export default function Settings() {
         </p>
       </Card>
 
+      <Card title="Costing" subtitle="Rates the dashboard bills on, in rupees per minute">
+        <div className="flex flex-wrap gap-4">
+          <NumberField
+            label="Carrier"
+            value={form.rate_carrier_pkr_per_min}
+            onChange={set("rate_carrier_pkr_per_min")}
+            min={0}
+            max={100}
+            suffix="PKR/min"
+            hint="Charged on the whole call"
+          />
+          <NumberField
+            label="Menu only"
+            value={form.rate_ivr_pkr_per_min}
+            onChange={set("rate_ivr_pkr_per_min")}
+            min={0}
+            max={100}
+            suffix="PKR/min"
+            hint="Minutes before the AI joins"
+          />
+          <NumberField
+            label="AI"
+            value={form.rate_ai_pkr_per_min}
+            onChange={set("rate_ai_pkr_per_min")}
+            min={0}
+            max={500}
+            suffix="PKR/min"
+            hint="Only after pressing 2"
+          />
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2">
+          <label className="flex cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={!!form.carrier_bills_whole_minutes}
+              onChange={(e) => set("carrier_bills_whole_minutes")(e.target.checked)}
+              className="h-4 w-4"
+            />
+            <span className="text-[13px]">Carrier bills whole minutes, rounded up</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-3">
+            <input
+              type="checkbox"
+              checked={!!form.charge_unanswered}
+              onChange={(e) => set("charge_unanswered")(e.target.checked)}
+              className="h-4 w-4"
+            />
+            <span className="text-[13px]">Charge for calls that were never answered</span>
+          </label>
+        </div>
+
+        <div
+          className="mt-4 rounded-[10px] px-3 py-2.5 text-[12px]"
+          style={{ background: "var(--surface-sunken)", color: "var(--text-muted)" }}
+        >
+          <strong style={{ color: "var(--text-secondary)" }}>Both checkboxes above are unconfirmed with Telecard.</strong>{" "}
+          Most Pakistani carriers bill in whole minutes, which roughly doubles the cost of a
+          short satisfied call — a 26-second call goes from about Rs 1.27 to Rs 2.49. Worth
+          confirming before quoting anyone a per-call figure.
+        </div>
+
+        <p className="mt-3 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          A minute is either a menu minute or an AI minute, never both. Actual provider spend
+          is recorded separately in USD and is not affected by these rates.
+        </p>
+      </Card>
+
       <Card title="Pause" subtitle="Stop placing new calls without losing the queue">
         <label className="flex cursor-pointer items-center gap-3">
           <input

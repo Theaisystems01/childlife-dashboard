@@ -4,7 +4,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from ..db import calls
+from ..db import calls, get_db
+from ..pricing import Tariff
 from ..reporting import AREAS, COMPLAINT_CATEGORIES, COMPLAINT_SUBCATEGORIES
 from ..security import current_user
 from .calls import build_filter
@@ -51,7 +52,18 @@ async def overview(
     status_counts = await _facet_counts(match, "status")
 
     # Totals for duration and cost in one pass.
-    totals = {"duration": 0.0, "cost": 0.0}
+    #
+    # The rupee total is summed from the billable quantities rather than from each
+    # call's stored figure, because the tariff can change and old records would then
+    # be priced at whatever rate happened to apply when they were written.
+    #
+    # A call counts as connected unless it explicitly says otherwise — inbound records
+    # predate the `connected` field and are connected by definition.
+    is_connected = {"$ne": [{"$ifNull": ["$connected", True]}, False]}
+    billable_duration = {"$cond": [is_connected, {"$ifNull": ["$duration", 0]}, 0]}
+    billable_ai = {"$cond": [is_connected, {"$ifNull": ["$ai_duration", 0]}, 0]}
+
+    totals = {"duration": 0.0, "cost": 0.0, "billable": 0.0, "billable_ceil": 0.0, "ai": 0.0}
     async for row in collection.aggregate(
         [
             {"$match": match},
@@ -60,12 +72,32 @@ async def overview(
                     "_id": None,
                     "duration": {"$sum": {"$ifNull": ["$duration", 0]}},
                     "cost": {"$sum": {"$ifNull": ["$cost.total_cost", 0]}},
+                    "billable": {"$sum": billable_duration},
+                    # Pre-computed for the whole-minute tariff, which cannot be derived
+                    # from the plain sum after the fact.
+                    "billable_ceil": {"$sum": {"$ceil": billable_duration}},
+                    "ai": {"$sum": billable_ai},
                 }
             },
         ]
     ):
         totals["duration"] = float(row.get("duration") or 0)
         totals["cost"] = float(row.get("cost") or 0)
+        totals["billable"] = float(row.get("billable") or 0)
+        totals["billable_ceil"] = float(row.get("billable_ceil") or 0)
+        totals["ai"] = float(row.get("ai") or 0)
+
+    tariff = Tariff.from_settings(await get_db()["settings"].find_one({"_id": "dialer"}))
+    carrier_minutes = (
+        totals["billable_ceil"] if tariff.carrier_bills_whole_minutes else totals["billable"]
+    )
+    ai_minutes = min(totals["ai"], totals["billable"])
+    menu_minutes = max(0.0, totals["billable"] - ai_minutes)
+    total_pkr = (
+        tariff.carrier_pkr_per_min * carrier_minutes
+        + tariff.ivr_pkr_per_min * menu_minutes
+        + tariff.ai_pkr_per_min * ai_minutes
+    )
 
     valid_complaints = await collection.count_documents(
         {**match, "feedback_summary.is_valid_feedback": True}
@@ -116,6 +148,9 @@ async def overview(
             "total_minutes": round(totals["duration"], 1),
             "avg_minutes": round(totals["duration"] / total, 2) if total else 0.0,
             "total_cost_usd": round(totals["cost"], 4),
+            "total_cost_pkr": round(total_pkr, 2),
+            "ai_minutes": round(ai_minutes, 2),
+            "menu_minutes": round(menu_minutes, 2),
         },
         "status": _ordered(status_counts, ("answered", "satisfied", "silent", "unanswered")),
         "categories": _ordered(

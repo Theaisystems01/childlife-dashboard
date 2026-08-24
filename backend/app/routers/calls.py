@@ -6,11 +6,18 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from ..db import calls
+from ..db import calls, get_db
+from ..pricing import Tariff
 from ..reporting import extract_transcript, to_call_summary
 from ..security import current_user
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
+
+
+async def load_tariff() -> Tariff:
+    """Rates as configured in the dashboard. One read per request, not per row."""
+    doc = await get_db()["settings"].find_one({"_id": "dialer"})
+    return Tariff.from_settings(doc)
 
 
 def build_filter(
@@ -101,7 +108,8 @@ async def list_calls(
         .skip((page - 1) * limit)
         .limit(limit)
     )
-    items = [to_call_summary(doc) async for doc in cursor]
+    tariff = await load_tariff()
+    items = [to_call_summary(doc, tariff) async for doc in cursor]
 
     return {
         "items": items,
@@ -137,7 +145,7 @@ async def get_call(
     if not doc:
         raise HTTPException(status_code=404, detail="Call not found")
 
-    detail = to_call_summary(doc)
+    detail = to_call_summary(doc, await load_tariff())
     detail["transcript"] = extract_transcript(doc)
     detail["metrics"] = doc.get("metrics") or {}
     detail["cost_breakdown"] = doc.get("cost") or {}

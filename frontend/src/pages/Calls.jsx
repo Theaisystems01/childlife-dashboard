@@ -41,6 +41,22 @@ function InputBadge({ input, connected }) {
   return <Badge tone={tone}>{input || "—"}</Badge>;
 }
 
+/** "1.77" minutes is not a thing anyone says out loud. Render it as 1m 46s. */
+function formatDuration(minutes) {
+  const total = Math.round((Number(minutes) || 0) * 60);
+  if (total <= 0) return "0s";
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (!m) return `${s}s`;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+/** Rupees, the currency the costing conversation actually happens in. */
+function pkr(value) {
+  const n = Number(value) || 0;
+  return `Rs ${n.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function formatWhen(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -133,7 +149,8 @@ export default function Calls({ filters }) {
                       looked the same as a dead number. */}
                   <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Status</th>
                   <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Input</th>
-                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>AI min</th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>AI time</th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Cost</th>
                   {COLUMNS.map((c) => (
                     <th key={c} className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
                       {c}
@@ -160,7 +177,18 @@ export default function Calls({ filters }) {
                       style={{ color: row.ai_minutes ? "var(--text-primary)" : "var(--text-muted)" }}
                       title={row.ai_engaged ? "Minutes spent with the AI" : "IVR only — no AI, no model cost"}
                     >
-                      {row.ai_engaged ? row.ai_minutes.toFixed(2) : "—"}
+                      {row.ai_engaged ? formatDuration(row.ai_minutes) : "—"}
+                    </td>
+                    <td
+                      className="tnum px-3 py-2.5 whitespace-nowrap"
+                      style={{ color: row.cost_pkr ? "var(--text-primary)" : "var(--text-muted)" }}
+                      title={
+                        row.cost_pkr_breakdown
+                          ? `carrier ${row.cost_pkr_breakdown.carrier} + menu ${row.cost_pkr_breakdown.ivr} + AI ${row.cost_pkr_breakdown.ai}`
+                          : ""
+                      }
+                    >
+                      {row.connection === "Answered" ? pkr(row.cost_pkr) : "—"}
                     </td>
                     {COLUMNS.map((c) => (
                       <td
@@ -265,17 +293,47 @@ function CallDetail({ sessionId, onClose }) {
                 ))}
                 <div className="contents">
                   <dt style={{ color: "var(--text-muted)" }}>Call length</dt>
-                  <dd className="tnum">{call.duration_minutes} min</dd>
+                  <dd className="tnum">{formatDuration(call.duration_minutes)}</dd>
                 </div>
                 <div className="contents">
                   <dt style={{ color: "var(--text-muted)" }}>AI minutes</dt>
                   <dd className="tnum" title="Time with the model. The recorded menu is free.">
-                    {call.ai_engaged ? `${call.ai_minutes} min` : "— (IVR only)"}
+                    {call.ai_engaged ? formatDuration(call.ai_minutes) : "— (IVR only)"}
                   </dd>
                 </div>
                 <div className="contents">
                   <dt style={{ color: "var(--text-muted)" }}>Cost</dt>
-                  <dd className="tnum">${call.cost_usd?.toFixed(4)}</dd>
+                  <dd className="tnum font-medium">{pkr(call.cost_pkr)}</dd>
+                </div>
+                {call.cost_pkr_breakdown && (
+                  <>
+                    <div className="contents">
+                      <dt className="pl-3" style={{ color: "var(--text-muted)" }}>· carrier</dt>
+                      <dd className="tnum" style={{ color: "var(--text-muted)" }}>
+                        {pkr(call.cost_pkr_breakdown.carrier)}
+                      </dd>
+                    </div>
+                    <div className="contents">
+                      <dt className="pl-3" style={{ color: "var(--text-muted)" }}>· menu</dt>
+                      <dd className="tnum" style={{ color: "var(--text-muted)" }}>
+                        {pkr(call.cost_pkr_breakdown.ivr)}
+                      </dd>
+                    </div>
+                    <div className="contents">
+                      <dt className="pl-3" style={{ color: "var(--text-muted)" }}>· AI</dt>
+                      <dd className="tnum" style={{ color: "var(--text-muted)" }}>
+                        {pkr(call.cost_pkr_breakdown.ai)}
+                      </dd>
+                    </div>
+                  </>
+                )}
+                <div className="contents">
+                  <dt style={{ color: "var(--text-muted)" }} title="Actual provider spend, stored in USD">
+                    Provider spend
+                  </dt>
+                  <dd className="tnum" style={{ color: "var(--text-muted)" }}>
+                    ${call.cost_usd?.toFixed(4)}
+                  </dd>
                 </div>
               </dl>
             </div>

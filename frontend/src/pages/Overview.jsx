@@ -73,7 +73,16 @@ export default function Overview({ filters }) {
             hint={kpis.support_required ? `${kpis.support_required} need follow-up` : "None need follow-up"}
           />
           <Stat label="Satisfied" value={kpis.satisfied} hint="Pressed 1 at the menu" />
-          <Stat label="Avg length" value={`${kpis.avg_minutes}m`} hint={`$${kpis.total_cost_usd.toFixed(3)} spend`} />
+          <Stat label="Avg length" value={`${kpis.avg_minutes}m`} hint="Per call" />
+          <Stat
+            label="Cost"
+            value={`Rs ${Number(kpis.total_cost_pkr || 0).toLocaleString("en-PK", { maximumFractionDigits: 0 })}`}
+            hint={
+              kpis.ai_minutes != null
+                ? `${Math.round(kpis.ai_minutes)}m AI · ${Math.round(kpis.menu_minutes || 0)}m menu`
+                : `$${(kpis.total_cost_usd || 0).toFixed(3)} provider spend`
+            }
+          />
         </StatStrip>
       )}
 

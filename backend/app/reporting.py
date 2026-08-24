@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from .pricing import Tariff, cost_breakdown
+
 # The ChildLife feedback report, in the exact column order the foundation uses.
 REPORT_COLUMNS = [
     "Phone Number",
@@ -108,11 +110,20 @@ def input_label(doc: dict[str, Any]) -> str:
     return "Silent"
 
 
-def to_call_summary(doc: dict[str, Any]) -> dict[str, Any]:
+def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[str, Any]:
     """Report row plus the operational fields the dashboard shows alongside it."""
     row = to_report_row(doc)
     summary = doc.get("feedback_summary") or {}
     cost = doc.get("cost") or {}
+
+    duration_minutes = round(float(doc.get("duration") or 0), 2)
+    ai_minutes = round(float(doc.get("ai_duration") or 0), 2)
+    pkr = cost_breakdown(
+        duration_minutes=duration_minutes,
+        ai_minutes=ai_minutes,
+        connected=was_connected(doc),
+        tariff=tariff,
+    )
 
     timestamp = doc.get("timestamp")
     return {
@@ -126,13 +137,17 @@ def to_call_summary(doc: dict[str, Any]) -> dict[str, Any]:
         "satisfied": doc.get("satisfied"),
         "dtmf_selection": doc.get("dtmf_selection", ""),
         "patient_matched": doc.get("patient_matched"),
-        "duration_minutes": round(float(doc.get("duration") or 0), 2),
+        "duration_minutes": duration_minutes,
         # Time spent with the model, which is what actually costs money — the
         # prerecorded menu is free, so a satisfied caller is 0 AI minutes.
-        "ai_minutes": round(float(doc.get("ai_duration") or 0), 2),
+        "ai_minutes": ai_minutes,
         "ai_engaged": bool(doc.get("ai_engaged")),
         "attempt": int(doc.get("attempt") or 1),
+        # Raw provider spend, exactly as the agent recorded it.
         "cost_usd": round(float(cost.get("total_cost") or cost.get("total") or 0), 4),
+        # What the foundation is billed, which is a different number.
+        "cost_pkr": pkr["total"],
+        "cost_pkr_breakdown": pkr,
         "is_valid_feedback": bool(summary.get("is_valid_feedback")),
         "invalid_feedback_category": summary.get("invalid_feedback_category", ""),
         "support_required": bool(summary.get("support_required")),
