@@ -186,6 +186,11 @@ async def upload(
             "batch_id": batch_id,
             "uploaded_at": datetime.now(),
             "uploaded_by": user.get("username", ""),
+            # Uploading someone is an explicit request to call them, so un-archive on
+            # the way in. Without this, re-uploading a sheet whose numbers were
+            # previously archived silently imports them straight back into the hidden
+            # state and the queue stays empty for no visible reason.
+            "archived": False,
         }
 
         result = await collection.update_one(
