@@ -239,7 +239,15 @@ async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
         "caller_number",
         "feedback_output.Phone Number",
     ]
-    query = {"$or": [{f: {"$in": all_variants}} for f in fields]}
+    # Archived calls must be excluded here as well. This was the one query in the
+    # backend that read conversation-logs without the filter, so a patient's "latest
+    # call" could be an archived record — and since pre-2026-08-24 records stored
+    # Pakistan wall-clock as if it were UTC, those sort ahead of calls that genuinely
+    # happened later. A patient who had just gone unanswered showed as completed.
+    query = {
+        "archived": {"$ne": True},
+        "$or": [{f: {"$in": all_variants}} for f in fields],
+    }
 
     by_key: dict[str, list[dict[str, Any]]] = {}
     async for doc in calls().find(
