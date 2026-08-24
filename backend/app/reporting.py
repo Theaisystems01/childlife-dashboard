@@ -69,6 +69,45 @@ def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def was_connected(doc: dict[str, Any]) -> bool:
+    """Did the far end actually pick up?
+
+    Outbound records carry `connected` explicitly. Inbound records predate the field —
+    and an inbound call is connected by definition, since the caller dialled us.
+    """
+    connected = doc.get("connected")
+    if connected is not None:
+        return bool(connected)
+    return doc.get("status") != "not_connected"
+
+
+def connection_label(doc: dict[str, Any]) -> str:
+    """Column one: did we reach them. Nothing about what they said."""
+    return "Answered" if was_connected(doc) else "Not answered"
+
+
+def input_label(doc: dict[str, Any]) -> str:
+    """Column two: what the caller pressed.
+
+    Kept separate from the connection state on purpose — they answer different
+    questions, and collapsing them into one column made "silent" and "not answered"
+    look like the same outcome when they are operationally very different: one is a
+    number that needs redialling, the other is a person who chose not to engage.
+    """
+    if not was_connected(doc):
+        # The dial never landed; the reason lives in the invalid-feedback category
+        # (Busy / Unanswered / Powered Off / Wrong Numbers).
+        summary = doc.get("feedback_summary") or {}
+        return summary.get("invalid_feedback_category") or "—"
+
+    selection = str(doc.get("dtmf_selection") or "")
+    if selection == "1" or doc.get("satisfied") is True:
+        return "Satisfied"
+    if selection == "2" or doc.get("satisfied") is False:
+        return "Dissatisfied"
+    return "Silent"
+
+
 def to_call_summary(doc: dict[str, Any]) -> dict[str, Any]:
     """Report row plus the operational fields the dashboard shows alongside it."""
     row = to_report_row(doc)
@@ -81,11 +120,18 @@ def to_call_summary(doc: dict[str, Any]) -> dict[str, Any]:
         "session_id": doc.get("session_id", ""),
         "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else None,
         "status": doc.get("status", ""),
+        "connection": connection_label(doc),
+        "caller_input": input_label(doc),
         "direction": doc.get("direction", "outbound"),
         "satisfied": doc.get("satisfied"),
         "dtmf_selection": doc.get("dtmf_selection", ""),
         "patient_matched": doc.get("patient_matched"),
         "duration_minutes": round(float(doc.get("duration") or 0), 2),
+        # Time spent with the model, which is what actually costs money — the
+        # prerecorded menu is free, so a satisfied caller is 0 AI minutes.
+        "ai_minutes": round(float(doc.get("ai_duration") or 0), 2),
+        "ai_engaged": bool(doc.get("ai_engaged")),
+        "attempt": int(doc.get("attempt") or 1),
         "cost_usd": round(float(cost.get("total_cost") or cost.get("total") or 0), 4),
         "is_valid_feedback": bool(summary.get("is_valid_feedback")),
         "invalid_feedback_category": summary.get("invalid_feedback_category", ""),

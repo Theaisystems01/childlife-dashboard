@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
-import { Badge, Button, Card, EmptyState, Field, Input, Select, Skeleton, StatusBadge } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Select, Skeleton } from "../components/ui";
 
 const COLUMNS = [
   "Phone Number",
@@ -15,6 +16,30 @@ const COLUMNS = [
   "Complaint Sub Category",
   "Area",
 ];
+
+/** Did we reach the number. Shows the attempt count when it took more than one. */
+function ConnectionBadge({ connection, attempt }) {
+  const answered = connection === "Answered";
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <Badge tone={answered ? "good" : "critical"}>{connection || "—"}</Badge>
+      {attempt > 1 && (
+        <span className="tnum text-[11px]" style={{ color: "var(--text-muted)" }} title={`Connected on attempt ${attempt}`}>
+          ·{attempt}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** What the caller pressed. Only meaningful once the call was answered. */
+function InputBadge({ input, connected }) {
+  if (!connected) {
+    return <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{input || "—"}</span>;
+  }
+  const tone = input === "Satisfied" ? "good" : input === "Dissatisfied" ? "critical" : undefined;
+  return <Badge tone={tone}>{input || "—"}</Badge>;
+}
 
 function formatWhen(iso) {
   if (!iso) return "—";
@@ -102,7 +127,13 @@ export default function Calls({ filters }) {
             <table className="w-full text-[13px]">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                  {/* Two columns, not one. "Answered" and "Silent" are different
+                      questions: the first is whether the number is reachable, the
+                      second is whether the family engaged. Merged, a silent answer
+                      looked the same as a dead number. */}
                   <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Status</th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Input</th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>AI min</th>
                   {COLUMNS.map((c) => (
                     <th key={c} className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
                       {c}
@@ -118,7 +149,19 @@ export default function Calls({ filters }) {
                     className="cursor-pointer transition-colors hover:brightness-[0.98]"
                     style={{ borderBottom: "1px solid var(--border)" }}
                   >
-                    <td className="px-3 py-2.5 whitespace-nowrap"><StatusBadge status={row.status} /></td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <ConnectionBadge connection={row.connection} attempt={row.attempt} />
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <InputBadge input={row.caller_input} connected={row.connection === "Answered"} />
+                    </td>
+                    <td
+                      className="tnum px-3 py-2.5 whitespace-nowrap"
+                      style={{ color: row.ai_minutes ? "var(--text-primary)" : "var(--text-muted)" }}
+                      title={row.ai_engaged ? "Minutes spent with the AI" : "IVR only — no AI, no model cost"}
+                    >
+                      {row.ai_engaged ? row.ai_minutes.toFixed(2) : "—"}
+                    </td>
                     {COLUMNS.map((c) => (
                       <td
                         key={c}
@@ -170,15 +213,23 @@ function CallDetail({ sessionId, onClose }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  // Portalled to <body> on purpose. App.jsx wraps every page in .animate-in, which
+  // animates `transform` — and a transformed ancestor becomes the containing block for
+  // position:fixed. Rendered in place, this drawer anchored to the centred, max-width
+  // <main> and slid out of the page gutter instead of the edge of the screen.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex justify-end" style={{ background: "rgba(11,11,11,0.35)" }} onClick={onClose}>
+      {/* The panel itself never scrolls. It is a flex column of three parts: a fixed
+          header, a fixed report block, and a transcript that scrolls on its own. The
+          previous version put overflow-y-auto on the whole aside, so a long transcript
+          dragged the header and the report off-screen together. */}
       <aside
-        className="animate-in flex h-full w-full max-w-[560px] flex-col overflow-y-auto border-l"
+        className="animate-in flex h-full w-full max-w-[560px] flex-col overflow-hidden border-l"
         style={{ background: "var(--surface)", borderColor: "var(--border)", boxShadow: "var(--shadow-lg)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <header
-          className="sticky top-0 flex items-center justify-between border-b px-5 py-4"
+          className="flex shrink-0 items-center justify-between border-b px-5 py-4"
           style={{ background: "var(--surface)", borderColor: "var(--border)" }}
         >
           <div>
@@ -192,17 +243,17 @@ function CallDetail({ sessionId, onClose }) {
         {call === false && <div className="p-5 text-sm" style={{ color: "var(--critical)" }}>Could not load this call.</div>}
 
         {call && (
-          <div className="flex flex-col gap-6 p-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={call.status} />
-              <Badge tone="accent">{call.direction}</Badge>
-              {call.dtmf_selection && <Badge>keypad {call.dtmf_selection}</Badge>}
-              {call.patient_matched && <Badge tone="good">✓ patient matched</Badge>}
-              {call.support_required && <Badge tone="critical">follow-up needed</Badge>}
-            </div>
+          <>
+            {/* Fixed upper block — stays visible while the transcript scrolls. */}
+            <div className="shrink-0 border-b px-5 py-4" style={{ borderColor: "var(--border)" }}>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <ConnectionBadge connection={call.connection} attempt={call.attempt} />
+                <InputBadge input={call.caller_input} connected={call.connection === "Answered"} />
+                <Badge tone="accent">{call.direction}</Badge>
+                {call.patient_matched && <Badge tone="good">✓ patient matched</Badge>}
+                {call.support_required && <Badge tone="critical">follow-up needed</Badge>}
+              </div>
 
-            <div>
-              <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Report</h3>
               <dl className="grid grid-cols-[minmax(120px,auto)_1fr] gap-x-4 gap-y-1.5 text-[13px]">
                 {COLUMNS.map((c) => (
                   <div key={c} className="contents">
@@ -213,8 +264,14 @@ function CallDetail({ sessionId, onClose }) {
                   </div>
                 ))}
                 <div className="contents">
-                  <dt style={{ color: "var(--text-muted)" }}>Duration</dt>
+                  <dt style={{ color: "var(--text-muted)" }}>Call length</dt>
                   <dd className="tnum">{call.duration_minutes} min</dd>
+                </div>
+                <div className="contents">
+                  <dt style={{ color: "var(--text-muted)" }}>AI minutes</dt>
+                  <dd className="tnum" title="Time with the model. The recorded menu is free.">
+                    {call.ai_engaged ? `${call.ai_minutes} min` : "— (IVR only)"}
+                  </dd>
                 </div>
                 <div className="contents">
                   <dt style={{ color: "var(--text-muted)" }}>Cost</dt>
@@ -223,16 +280,21 @@ function CallDetail({ sessionId, onClose }) {
               </dl>
             </div>
 
-            <div>
-              <h3 className="mb-2 text-[11px] font-medium uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
+            {/* min-h-0 is what actually lets this scroll: without it the flex child
+                grows to fit its content instead of clipping. */}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <h3
+                className="shrink-0 px-5 pb-2 pt-4 text-[11px] font-medium uppercase tracking-wider"
+                style={{ color: "var(--text-muted)" }}
+              >
                 Transcript {call.transcript?.length ? `· ${call.transcript.length} turns` : ""}
               </h3>
               {call.transcript?.length ? (
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-5 pb-5">
                   {call.transcript.map((turn, i) => (
                     <div
                       key={i}
-                      className="rounded-lg px-3 py-2 text-[13px]"
+                      className="shrink-0 rounded-lg px-3 py-2 text-[13px]"
                       style={{
                         background: turn.role === "assistant" ? "var(--accent-wash)" : "var(--surface-sunken)",
                         marginLeft: turn.role === "assistant" ? 0 : "1.5rem",
@@ -241,17 +303,20 @@ function CallDetail({ sessionId, onClose }) {
                       <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
                         {turn.role === "assistant" ? "Ayesha" : "Caller"}
                       </div>
-                      <div style={{ color: "var(--text-primary)" }}>{turn.text}</div>
+                      <div className="whitespace-pre-wrap break-words" style={{ color: "var(--text-primary)" }}>{turn.text}</div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>No transcript recorded for this call.</p>
+                <p className="px-5 pb-5 text-[13px]" style={{ color: "var(--text-muted)" }}>
+                  No transcript recorded for this call.
+                </p>
               )}
             </div>
-          </div>
+          </>
         )}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }
