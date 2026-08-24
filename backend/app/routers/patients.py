@@ -230,23 +230,34 @@ async def upload(
             "archived": False,
         }
 
-        update: dict[str, Any] = {
-            "$set": doc,
-            # Only on insert, so an existing patient's history is not clobbered by a
-            # correction upload.
-            "$setOnInsert": {"call_status": "pending", "attempts": 0, "last_called_at": None},
-        }
         if recall_existing:
             # A new round of calls: put them back in the queue with a fresh attempt
             # budget. The call records themselves are untouched, so the history of what
             # was said last time survives.
-            update["$set"] = {
-                **doc,
-                "call_status": "pending",
-                "attempts": 0,
-                "next_retry_at": None,
+            #
+            # These fields go in $set alone. Mongo rejects the same path appearing in
+            # both $set and $setOnInsert, and on an insert $set already covers them.
+            update: dict[str, Any] = {
+                "$set": {
+                    **doc,
+                    "call_status": "pending",
+                    "attempts": 0,
+                    "last_called_at": None,
+                    "next_retry_at": None,
+                },
             }
             recalled += 1
+        else:
+            update = {
+                "$set": doc,
+                # Only on insert, so a correction upload does not clobber the call
+                # progress of someone who has already been rung.
+                "$setOnInsert": {
+                    "call_status": "pending",
+                    "attempts": 0,
+                    "last_called_at": None,
+                },
+            }
 
         result = await collection.update_one({"phone_key": key}, update, upsert=True)
         if result.upserted_id:
