@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -114,12 +114,26 @@ async def template(_: dict[str, Any] = Depends(current_user)) -> StreamingRespon
 @router.post("/upload")
 async def upload(
     file: UploadFile = File(...),
+    recall_existing: bool = Form(True),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     """Import patients from an .xlsx sheet.
 
-    Rows are keyed on the normalized phone number, so re-uploading a corrected sheet
-    updates the existing patients rather than creating duplicates.
+    Rows are keyed on the normalized phone number, so a patient who appears in more
+    than one sheet is one record rather than several.
+
+    `recall_existing` decides what that means for someone already called:
+
+      True  — the sheet is a new round of calls. Anyone in it becomes due again, even
+              if a previous visit was already closed out. A family that comes back to
+              the ER should be asked about the second visit.
+
+      False — the sheet is a correction to one already uploaded. Details are updated
+              but call progress is left alone, so nobody who has already been called
+              gets rung a second time.
+
+    There is no way to infer which is meant. Visit date would have distinguished them,
+    but the foundation does not supply it, so the caller has to say.
     """
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Please upload an .xlsx file")
@@ -157,7 +171,7 @@ async def upload(
     await collection.create_index("phone_key", unique=True)
     await collection.create_index("call_status")
 
-    created = updated = skipped = duplicates = 0
+    created = updated = skipped = duplicates = recalled = 0
     problems: list[dict[str, Any]] = []
     # Two rows carrying the same number are one patient. Without this the second row
     # silently overwrote the first and the caller was told "1 created, 1 updated" for
@@ -216,18 +230,28 @@ async def upload(
             "archived": False,
         }
 
-        result = await collection.update_one(
-            {"phone_key": key},
-            {
-                "$set": doc,
-                # Only set on insert, so re-uploading never resets a patient who has
-                # already been called back to the top of the queue.
-                "$setOnInsert": {"call_status": "pending", "attempts": 0, "last_called_at": None},
-            },
-            upsert=True,
-        )
+        update: dict[str, Any] = {
+            "$set": doc,
+            # Only on insert, so an existing patient's history is not clobbered by a
+            # correction upload.
+            "$setOnInsert": {"call_status": "pending", "attempts": 0, "last_called_at": None},
+        }
+        if recall_existing:
+            # A new round of calls: put them back in the queue with a fresh attempt
+            # budget. The call records themselves are untouched, so the history of what
+            # was said last time survives.
+            update["$set"] = {
+                **doc,
+                "call_status": "pending",
+                "attempts": 0,
+                "next_retry_at": None,
+            }
+            recalled += 1
+
+        result = await collection.update_one({"phone_key": key}, update, upsert=True)
         if result.upserted_id:
             created += 1
+            recalled = max(0, recalled - 1)  # a new patient was not "recalled"
         else:
             updated += 1
 
@@ -240,6 +264,8 @@ async def upload(
         "updated": updated,
         "skipped": skipped,
         "duplicates": duplicates,
+        "recalled": recalled,
+        "recall_existing": recall_existing,
         "rows_read": line_count,
         "problems": problems,
     }

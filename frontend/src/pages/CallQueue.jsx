@@ -108,6 +108,10 @@ function Upload({ onDone }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  // Nothing in the sheet says whether this is a fresh round of calls or a correction
+  // to the last one — visit date would have, but the foundation does not supply it —
+  // so the person uploading has to tell us.
+  const [recallExisting, setRecallExisting] = useState(true);
   const inputRef = useRef(null);
 
   const send = useCallback(
@@ -117,7 +121,7 @@ function Upload({ onDone }) {
       setError("");
       setResult(null);
       try {
-        const r = await api.uploadPatients(file);
+        const r = await api.uploadPatients(file, { recallExisting });
         setResult(r);
         onDone?.();
       } catch (e) {
@@ -126,7 +130,7 @@ function Upload({ onDone }) {
         setBusy(false);
       }
     },
-    [onDone],
+    [onDone, recallExisting],
   );
 
   return (
@@ -188,6 +192,40 @@ function Upload({ onDone }) {
         </div>
       </div>
 
+      <div className="mt-4 flex flex-col gap-2">
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            type="radio"
+            name="upload-mode"
+            checked={recallExisting}
+            onChange={() => setRecallExisting(true)}
+            className="mt-0.5 h-4 w-4"
+          />
+          <span className="text-[13px]">
+            A new round of calls
+            <span className="ml-1.5 text-[12px]" style={{ color: "var(--text-muted)" }}>
+              — anyone in the sheet becomes due again, including families called about an
+              earlier visit
+            </span>
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            type="radio"
+            name="upload-mode"
+            checked={!recallExisting}
+            onChange={() => setRecallExisting(false)}
+            className="mt-0.5 h-4 w-4"
+          />
+          <span className="text-[13px]">
+            A correction to a sheet already uploaded
+            <span className="ml-1.5 text-[12px]" style={{ color: "var(--text-muted)" }}>
+              — details are updated, but nobody already called is rung again
+            </span>
+          </span>
+        </label>
+      </div>
+
       {error && (
         <div className="mt-3 rounded-[10px] px-3 py-2 text-[13px]" style={{ background: "rgba(208,59,59,0.10)", color: "var(--critical)" }} role="alert">
           {error}
@@ -199,6 +237,9 @@ function Upload({ onDone }) {
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13px]">
             <span style={{ color: "var(--good)" }}>{result.created} added</span>
             <span style={{ color: "var(--text-secondary)" }}>{result.updated} updated</span>
+            {result.recalled > 0 && (
+              <span style={{ color: "var(--accent)" }}>{result.recalled} due again</span>
+            )}
             {result.duplicates > 0 && (
               <span style={{ color: "var(--warning-ink)" }}>{result.duplicates} duplicate row(s)</span>
             )}

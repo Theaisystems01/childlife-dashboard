@@ -96,9 +96,10 @@ export const api = {
     return res.json();
   },
 
-  uploadPatients: async (file) => {
+  uploadPatients: async (file, { recallExisting = true } = {}) => {
     const body = new FormData();
     body.append("file", file);
+    body.append("recall_existing", recallExisting ? "true" : "false");
     const res = await request("/api/patients/upload", { method: "POST", body });
     return res.json();
   },
