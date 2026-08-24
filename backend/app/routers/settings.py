@@ -24,8 +24,12 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 SETTINGS_ID = "dialer"
 
-# Commercial rates. Visible and editable by admins only — a viewer account should be
-# able to run the calling operation without seeing what it is billed at.
+# Commercial rates. Deliberately NOT gated on the admin role — running the calling
+# operation and seeing what it is billed at are different concerns, and an operations
+# admin has no reason to see the margin. Access is per account, off unless granted:
+#
+#   db.getCollection("dashboard-users").updateOne(
+#       {username: "someone"}, {$set: {can_manage_costing: true}})
 COSTING_FIELDS = (
     "rate_carrier_pkr_per_min",
     "rate_ivr_pkr_per_min",
@@ -35,8 +39,8 @@ COSTING_FIELDS = (
 )
 
 
-def _is_admin(user: dict[str, Any]) -> bool:
-    return (user.get("role") or "viewer") == "admin"
+def _can_manage_costing(user: dict[str, Any]) -> bool:
+    return bool(user.get("can_manage_costing"))
 
 
 class DialerSettings(BaseModel):
@@ -128,7 +132,7 @@ async def read_settings(user: dict[str, Any] = Depends(current_user)) -> dict[st
             **{k: v for k, v in doc.items() if k in DialerSettings.model_fields}
         ).model_dump()
 
-    if not _is_admin(user):
+    if not _can_manage_costing(user):
         for field in COSTING_FIELDS:
             settings.pop(field, None)
     return settings
@@ -142,9 +146,9 @@ async def write_settings(
     settings = payload.validated()
     update = settings.model_dump()
 
-    if not _is_admin(user):
-        # A viewer's form never showed the rates, so whatever it submitted for them is
-        # the model default rather than an intentional change. Keep what is stored;
+    if not _can_manage_costing(user):
+        # Their form never showed the rates, so whatever it submitted for them is the
+        # model default rather than an intentional change. Keep what is stored;
         # hiding the card in the UI is not on its own a control.
         stored = await collection().find_one({"_id": SETTINGS_ID}) or {}
         for field in COSTING_FIELDS:
@@ -165,7 +169,7 @@ async def write_settings(
         upsert=True,
     )
 
-    if not _is_admin(user):
+    if not _can_manage_costing(user):
         for field in COSTING_FIELDS:
             update.pop(field, None)
     return update

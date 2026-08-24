@@ -36,6 +36,7 @@ async def login(form: OAuth2PasswordRequestForm = Depends()) -> dict[str, Any]:
             "username": user["username"],
             "name": user.get("name", user["username"]),
             "role": role,
+            "can_manage_costing": bool(user.get("can_manage_costing")),
         },
     }
 
@@ -46,4 +47,7 @@ async def me(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
         "username": user["username"],
         "name": user.get("name", user["username"]),
         "role": user.get("role", "viewer"),
+        # Separate from role on purpose: an operations admin can run the calling
+        # operation without seeing what it is billed at.
+        "can_manage_costing": bool(user.get("can_manage_costing")),
     }

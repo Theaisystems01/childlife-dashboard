@@ -97,7 +97,8 @@ export default function Settings({ user }) {
   if (!form) return <Skeleton className="h-[420px]" />;
 
   const retryCount = Math.max(0, (form.max_attempts || 1) - 1);
-  const isAdmin = user?.role === "admin";
+  // Not the admin role — costing access is granted per account.
+  const canManageCosting = Boolean(user?.can_manage_costing);
 
   return (
     <div className="flex max-w-[720px] flex-col gap-5">
@@ -177,10 +178,11 @@ export default function Settings({ user }) {
         </p>
       </Card>
 
-      {/* Rates are commercial, not operational. Hidden from viewer accounts — the
-          server enforces the same rule, since hiding a card does not stop anyone
-          PUTting to the endpoint. */}
-      {isAdmin && (
+      {/* Rates are commercial, not operational, so this is gated per account rather
+          than by role — an admin who runs the calling operation still does not see the
+          margin. The server enforces the same rule, since hiding a card does not stop
+          anyone PUTting to the endpoint. */}
+      {canManageCosting && (
       <Card title="Costing" subtitle="Rates the dashboard bills on, in rupees per minute">
         <div className="flex flex-wrap gap-4">
           <NumberField
