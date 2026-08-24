@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { formatWhen } from "../lib/time";
+import { formatRelative, formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Segmented, Select, Skeleton, Stat, StatStrip } from "../components/ui";
 
 const STATUS_TONE = { pending: "accent", attempted: "warning", completed: "good" };
@@ -40,6 +40,63 @@ function AttemptBreakdown({ byAttempt }) {
             <span className="tnum font-medium" style={{ color: "var(--text-primary)" }}>{count}</span>
           </span>
         ))}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Who uploaded which file, when, and what happened to it.
+ *
+ * Driven by the audit records, so a sheet still appears here after its patients have
+ * been removed — otherwise clearing the queue also erases any trace that the upload
+ * ever happened.
+ */
+function UploadHistory({ reload }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.batches().then((d) => !cancelled && setRows(d)).catch(() => !cancelled && setRows([]));
+    return () => { cancelled = true; };
+  }, [reload]);
+
+  if (!rows) return <Skeleton className="h-[120px]" />;
+  if (!rows.length) return null;
+
+  return (
+    <Card title="Upload history" subtitle="Every patient sheet imported, newest first">
+      <div className="-mx-5 overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              {["File", "Uploaded", "By", "Rows", "Added", "Updated", "Duplicates", "Skipped", "Still in queue"].map((h) => (
+                <th key={h} className="whitespace-nowrap px-3 py-2.5 text-left font-medium" style={{ color: "var(--text-muted)" }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((b) => (
+              <tr key={b.batch_id} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="max-w-[240px] truncate px-3 py-2.5" title={b.filename || b.batch_id}>
+                  {b.filename || <span style={{ color: "var(--text-muted)" }}>{b.batch_id}</span>}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2.5" style={{ color: "var(--text-secondary)" }} title={formatWhen(b.uploaded_at)}>
+                  {b.uploaded_at ? formatRelative(b.uploaded_at) : "—"}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2.5" style={{ color: "var(--text-secondary)" }}>{b.uploaded_by || "—"}</td>
+                <td className="tnum px-3 py-2.5">{b.rows_read || "—"}</td>
+                <td className="tnum px-3 py-2.5" style={{ color: b.created ? "var(--good)" : "var(--text-muted)" }}>{b.created || "—"}</td>
+                <td className="tnum px-3 py-2.5" style={{ color: "var(--text-muted)" }}>{b.updated || "—"}</td>
+                <td className="tnum px-3 py-2.5" style={{ color: b.duplicates ? "var(--warning-ink)" : "var(--text-muted)" }}>{b.duplicates || "—"}</td>
+                <td className="tnum px-3 py-2.5" style={{ color: b.skipped ? "var(--critical)" : "var(--text-muted)" }}>{b.skipped || "—"}</td>
+                <td className="tnum px-3 py-2.5">{b.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Card>
   );
@@ -142,7 +199,10 @@ function Upload({ onDone }) {
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13px]">
             <span style={{ color: "var(--good)" }}>{result.created} added</span>
             <span style={{ color: "var(--text-secondary)" }}>{result.updated} updated</span>
-            {result.skipped > 0 && <span style={{ color: "var(--warning-ink)" }}>{result.skipped} skipped</span>}
+            {result.duplicates > 0 && (
+              <span style={{ color: "var(--warning-ink)" }}>{result.duplicates} duplicate row(s)</span>
+            )}
+            {result.skipped > 0 && <span style={{ color: "var(--critical)" }}>{result.skipped} skipped</span>}
             <span style={{ color: "var(--text-muted)" }}>{result.total_patients} patients in total</span>
           </div>
 
@@ -206,6 +266,7 @@ export default function CallQueue({ filters }) {
   return (
     <div className="flex flex-col gap-6">
       <Upload onDone={() => setReload((n) => n + 1)} />
+      <UploadHistory reload={reload} />
 
       {!counts ? (
         <Skeleton className="h-[124px]" />
@@ -269,7 +330,7 @@ export default function CallQueue({ filters }) {
             <table className="w-full text-[13px]">
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                  {["Status", "Phone Number", "Patient Name", "MR Number", "ER name", "Visit Reason", "Attempts", "Last call"].map((h) => (
+                  {["Status", "Phone Number", "Patient Name", "MR Number", "ER name", "Attempts", "Last tried", "Next retry"].map((h) => (
                     <th key={h} className="whitespace-nowrap px-3 py-2.5 text-left font-medium" style={{ color: "var(--text-muted)" }}>
                       {h}
                     </th>
@@ -288,12 +349,29 @@ export default function CallQueue({ filters }) {
                       {p.mr_number || "—"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2.5">{p.er_name || "—"}</td>
-                    <td className="max-w-[220px] truncate px-3 py-2.5" style={{ color: "var(--text-secondary)" }} title={p.visit_reason || ""}>
-                      {p.visit_reason || "—"}
+                    <td className="tnum whitespace-nowrap px-3 py-2.5" title={`${p.call_count ?? 0} call record(s)`}>
+                      {p.attempts ?? 0}
                     </td>
-                    <td className="tnum whitespace-nowrap px-3 py-2.5">{p.call_count ?? 0}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5" style={{ color: "var(--text-muted)" }}>
-                      {formatWhen(p.last_call?.at)}
+                    {/* The dialler's own clock, not the call history — it is written
+                        even when a dial fails before any call record exists. */}
+                    <td
+                      className="whitespace-nowrap px-3 py-2.5"
+                      style={{ color: "var(--text-secondary)" }}
+                      title={p.last_called_at ? formatWhen(p.last_called_at) : "Never called"}
+                    >
+                      {p.last_called_at ? formatRelative(p.last_called_at) : "—"}
+                      {p.last_outcome && (
+                        <span className="ml-1.5 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          {p.last_outcome}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-3 py-2.5"
+                      style={{ color: p.next_retry_at ? "var(--warning-ink)" : "var(--text-muted)" }}
+                      title={p.next_retry_at ? formatWhen(p.next_retry_at) : ""}
+                    >
+                      {p.next_retry_at ? formatRelative(p.next_retry_at) : "—"}
                     </td>
                   </tr>
                 ))}

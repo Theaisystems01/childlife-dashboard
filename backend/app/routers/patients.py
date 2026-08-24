@@ -70,6 +70,11 @@ def patients():
     return get_db()[PATIENTS_COLLECTION]
 
 
+def uploads():
+    """Audit trail of patient-list uploads."""
+    return get_db()["patient-uploads"]
+
+
 @router.get("/template")
 async def template(_: dict[str, Any] = Depends(current_user)) -> StreamingResponse:
     """Blank upload sheet with the expected headings and one example row."""
@@ -152,10 +157,16 @@ async def upload(
     await collection.create_index("phone_key", unique=True)
     await collection.create_index("call_status")
 
-    created = updated = skipped = 0
+    created = updated = skipped = duplicates = 0
     problems: list[dict[str, Any]] = []
+    # Two rows carrying the same number are one patient. Without this the second row
+    # silently overwrote the first and the caller was told "1 created, 1 updated" for
+    # what they believed were two people.
+    seen_rows: dict[str, int] = {}
 
+    line_count = 0
     for line_no, row in enumerate(rows, start=2):
+        line_count += 1
         record = {field: _cell(row[i]) for i, field in mapping.items() if i < len(row)}
         number = record.get("phone_number", "")
 
@@ -173,6 +184,17 @@ async def upload(
             continue
 
         key = phones.normalize(number)
+
+        if key in seen_rows:
+            duplicates += 1
+            if len(problems) < 25:
+                problems.append({
+                    "row": line_no,
+                    "value": number,
+                    "reason": f"Same number as row {seen_rows[key]}; the later row was used",
+                })
+        seen_rows[key] = line_no
+
         doc = {
             "phone_key": key,
             "phone_e164": phones.to_e164(number),
@@ -184,6 +206,7 @@ async def upload(
             "patient_category": record.get("patient_category", ""),
             "disposition_category": record.get("disposition_category", ""),
             "batch_id": batch_id,
+            "source_file": file.filename or "",
             "uploaded_at": datetime.now(),
             "uploaded_by": user.get("username", ""),
             # Uploading someone is an explicit request to call them, so un-archive on
@@ -210,12 +233,29 @@ async def upload(
 
     wb.close()
 
-    return {
+    summary = {
         "batch_id": batch_id,
+        "filename": file.filename or "",
         "created": created,
         "updated": updated,
         "skipped": skipped,
+        "duplicates": duplicates,
+        "rows_read": line_count,
         "problems": problems,
+    }
+
+    # The response is the only place these numbers existed, so they vanished the moment
+    # the page was refreshed. Recorded so "who uploaded what, when, and what happened to
+    # it" survives the session.
+    await uploads().insert_one({
+        **summary,
+        "uploaded_at": datetime.now(),
+        "uploaded_by": user.get("username", ""),
+        "size_bytes": len(raw),
+    })
+
+    return {
+        **summary,
         "total_patients": await collection.count_documents({"archived": {"$ne": True}}),
     }
 
@@ -393,25 +433,49 @@ async def queue(
 
 @router.get("/batches")
 async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
-    """Upload history, newest first."""
-    pipeline = [
+    """Upload history, newest first.
+
+    Driven by the audit records rather than by grouping the patients themselves, so an
+    upload still appears once its rows have been removed — otherwise deleting a batch
+    also erases the evidence that it ever happened.
+    """
+    audit: dict[str, dict[str, Any]] = {}
+    async for row in uploads().find().sort("uploaded_at", -1).limit(30):
+        audit[row.get("batch_id", "")] = row
+
+    # How many rows from each batch are still present.
+    live: dict[str, int] = {}
+    async for row in patients().aggregate([
         {"$match": {"archived": {"$ne": True}}},
-        {"$group": {
-            "_id": "$batch_id",
-            "count": {"$sum": 1},
-            "uploaded_at": {"$max": "$uploaded_at"},
-            "uploaded_by": {"$first": "$uploaded_by"},
-        }},
-        {"$sort": {"uploaded_at": -1}},
-        {"$limit": 30},
-    ]
-    out = []
-    async for row in patients().aggregate(pipeline):
+        {"$group": {"_id": "$batch_id", "count": {"$sum": 1}}},
+    ]):
+        live[row["_id"]] = row["count"]
+
+    out: list[dict[str, Any]] = []
+    for batch_id, row in audit.items():
         ts = row.get("uploaded_at")
         out.append({
-            "batch_id": row["_id"],
-            "count": row["count"],
+            "batch_id": batch_id,
+            "filename": row.get("filename", ""),
             "uploaded_at": ts.isoformat() if isinstance(ts, datetime) else None,
             "uploaded_by": row.get("uploaded_by", ""),
+            "rows_read": row.get("rows_read", 0),
+            "created": row.get("created", 0),
+            "updated": row.get("updated", 0),
+            "skipped": row.get("skipped", 0),
+            "duplicates": row.get("duplicates", 0),
+            # Present now, as opposed to how many the sheet contained.
+            "count": live.get(batch_id, 0),
         })
+
+    # Batches predating the audit collection still have patients pointing at them.
+    for batch_id, count in live.items():
+        if batch_id not in audit:
+            out.append({
+                "batch_id": batch_id, "filename": "", "uploaded_at": None,
+                "uploaded_by": "", "rows_read": 0, "created": 0, "updated": 0,
+                "skipped": 0, "duplicates": 0, "count": count,
+            })
+
+    out.sort(key=lambda r: r["uploaded_at"] or "", reverse=True)
     return out
