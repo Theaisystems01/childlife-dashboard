@@ -32,7 +32,10 @@ export function formatRelative(iso) {
   const future = seconds > 0;
   const abs = Math.abs(seconds);
 
-  const say = (n, unit) => (future ? `in ${n} ${unit}` : `${n} ${unit} ago`);
+  const say = (n, unit) => {
+    const word = n === 1 ? unit : `${unit}s`;
+    return future ? `in ${n} ${word}` : `${n} ${word} ago`;
+  };
   if (abs < 45) return future ? "in a moment" : "just now";
   if (abs < 3600) return say(Math.round(abs / 60), "min");
   if (abs < 86400) return say(Math.round(abs / 3600), "hr");

@@ -37,6 +37,13 @@ const Icon = {
       <circle cx="3.5" cy="18" r="1.4" />
     </>
   ),
+  help: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.2a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2-2.4 3.4" />
+      <path d="M12 17.2h.01" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />
@@ -76,6 +83,7 @@ const NAV = [
   { id: "calls", label: "Call records", icon: "calls", hint: "Every call, searchable" },
   { id: "queue", label: "Call queue", icon: "queue", hint: "Who still needs calling" },
   { id: "settings", label: "Settings", icon: "settings", hint: "Retries and calling hours" },
+  { id: "help", label: "Help", icon: "help", hint: "How to use this dashboard" },
 ];
 
 export default function Sidebar({ tab, onTab, user, theme, onTheme, onSignOut }) {
@@ -84,6 +92,26 @@ export default function Sidebar({ tab, onTab, user, theme, onTheme, onSignOut })
   const themeCycle = { system: "light", light: "dark", dark: "system" };
   const themeGlyph = { system: "auto", light: "sun", dark: "moon" };
   const themeLabel = { system: "System theme", light: "Light theme", dark: "Dark theme" };
+
+  // Sits above the account block, quiet enough not to compete with the navigation.
+  const poweredBy = (
+    <a
+      href="https://theaisystem.com"
+      target="_blank"
+      rel="noreferrer"
+      className="mx-3 mb-2 flex items-center gap-2 rounded-[10px] px-2 py-2 transition-colors hover:brightness-95"
+      title="Built by AI Systems"
+    >
+      <span className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "var(--text-muted)" }}>
+        Powered by
+      </span>
+      <img
+        src="/aisystems-logo.png"
+        alt="AI Systems"
+        className="h-3.5 w-auto opacity-80"
+      />
+    </a>
+  );
 
   const body = (
     <>
@@ -147,6 +175,8 @@ export default function Sidebar({ tab, onTab, user, theme, onTheme, onSignOut })
       </nav>
 
       <div className="flex-1" />
+
+      {poweredBy}
 
       {/* Footer: theme + identity + sign out */}
       <div className="px-3 pb-4">

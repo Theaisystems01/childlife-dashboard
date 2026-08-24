@@ -7,6 +7,7 @@ import Overview from "./pages/Overview";
 import Calls from "./pages/Calls";
 import CallQueue from "./pages/CallQueue";
 import Settings from "./pages/Settings";
+import Help from "./pages/Help";
 
 const PAGES = {
   overview: {
@@ -28,6 +29,11 @@ const PAGES = {
     title: "Settings",
     description: "How and when outbound calls are placed.",
     Component: Settings,
+  },
+  help: {
+    title: "Help",
+    description: "How to upload a list, follow the queue, and read the reports.",
+    Component: Help,
   },
 };
 

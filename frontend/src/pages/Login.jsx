@@ -89,6 +89,15 @@ export default function Login({ onSignedIn }) {
         <p className="mt-5 text-center text-xs" style={{ color: "var(--text-muted)" }}>
           This dashboard contains patient records. Do not share your credentials.
         </p>
+
+        <div className="mt-8 flex flex-col items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.09em]" style={{ color: "var(--text-muted)" }}>
+            Powered by
+          </span>
+          <a href="https://theaisystem.com" target="_blank" rel="noreferrer">
+            <img src="/aisystems-logo.png" alt="AI Systems" className="h-5 w-auto opacity-85" />
+          </a>
+        </div>
       </div>
     </div>
   );
