@@ -63,7 +63,10 @@ async def overview(
     billable_duration = {"$cond": [is_connected, {"$ifNull": ["$duration", 0]}, 0]}
     billable_ai = {"$cond": [is_connected, {"$ifNull": ["$ai_duration", 0]}, 0]}
 
-    totals = {"duration": 0.0, "cost": 0.0, "billable": 0.0, "billable_ceil": 0.0, "ai": 0.0}
+    totals = {
+        "duration": 0.0, "cost": 0.0, "billable": 0.0,
+        "billable_60": 0.0, "billable_30": 0.0, "ai": 0.0,
+    }
     async for row in collection.aggregate(
         [
             {"$match": match},
@@ -73,9 +76,12 @@ async def overview(
                     "duration": {"$sum": {"$ifNull": ["$duration", 0]}},
                     "cost": {"$sum": {"$ifNull": ["$cost.total_cost", 0]}},
                     "billable": {"$sum": billable_duration},
-                    # Pre-computed for the whole-minute tariff, which cannot be derived
-                    # from the plain sum after the fact.
-                    "billable_ceil": {"$sum": {"$ceil": billable_duration}},
+                    # Pulse rounding cannot be derived from the plain sum after the
+                    # fact, so both roundings are computed per call here.
+                    "billable_60": {"$sum": {"$ceil": billable_duration}},
+                    "billable_30": {"$sum": {
+                        "$multiply": [{"$ceil": {"$multiply": [billable_duration, 2]}}, 0.5]
+                    }},
                     "ai": {"$sum": billable_ai},
                 }
             },
@@ -84,13 +90,17 @@ async def overview(
         totals["duration"] = float(row.get("duration") or 0)
         totals["cost"] = float(row.get("cost") or 0)
         totals["billable"] = float(row.get("billable") or 0)
-        totals["billable_ceil"] = float(row.get("billable_ceil") or 0)
+        totals["billable_60"] = float(row.get("billable_60") or 0)
+        totals["billable_30"] = float(row.get("billable_30") or 0)
         totals["ai"] = float(row.get("ai") or 0)
 
     tariff = Tariff.from_settings(await get_db()["settings"].find_one({"_id": "dialer"}))
-    carrier_minutes = (
-        totals["billable_ceil"] if tariff.carrier_bills_whole_minutes else totals["billable"]
-    )
+    if tariff.carrier_pulse_seconds >= 60:
+        carrier_minutes = totals["billable_60"]
+    elif tariff.carrier_pulse_seconds > 0:
+        carrier_minutes = totals["billable_30"]
+    else:
+        carrier_minutes = totals["billable"]
     ai_minutes = min(totals["ai"], totals["billable"])
     menu_minutes = max(0.0, totals["billable"] - ai_minutes)
     total_pkr = (

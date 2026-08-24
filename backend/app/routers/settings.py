@@ -30,7 +30,7 @@ COSTING_FIELDS = (
     "rate_carrier_pkr_per_min",
     "rate_ivr_pkr_per_min",
     "rate_ai_pkr_per_min",
-    "carrier_bills_whole_minutes",
+    "carrier_pulse_seconds",
     "charge_unanswered",
 )
 
@@ -81,10 +81,12 @@ class DialerSettings(BaseModel):
     rate_ai_pkr_per_min: float = Field(
         7.00, ge=0, le=500, description="Minutes spent with the AI"
     )
-    carrier_bills_whole_minutes: bool = Field(
-        False,
-        description="Round carrier minutes up. UNCONFIRMED with Telecard — most "
-        "Pakistani carriers do, which roughly doubles the cost of a short call.",
+    carrier_pulse_seconds: int = Field(
+        0,
+        ge=0,
+        le=60,
+        description="Carrier billing pulse in seconds, rounded up. 0 bills the exact "
+        "duration; 30 and 60 are the usual Pakistani pulses.",
     )
     charge_unanswered: bool = Field(
         False,

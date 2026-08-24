@@ -213,15 +213,18 @@ export default function Settings({ user }) {
         </div>
 
         <div className="mt-4 flex flex-col gap-2">
-          <label className="flex cursor-pointer items-center gap-3">
-            <input
-              type="checkbox"
-              checked={!!form.carrier_bills_whole_minutes}
-              onChange={(e) => set("carrier_bills_whole_minutes")(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <span className="text-[13px]">Carrier bills whole minutes, rounded up</span>
-          </label>
+          <Field label="Carrier billing pulse">
+            <select
+              value={form.carrier_pulse_seconds ?? 0}
+              onChange={(e) => set("carrier_pulse_seconds")(Number(e.target.value))}
+              className="h-9 rounded-[9px] border px-2.5 text-[13px]"
+              style={{ background: "var(--surface)", borderColor: "var(--border-strong)", color: "var(--text-primary)" }}
+            >
+              <option value={0}>Exact duration (per second)</option>
+              <option value={30}>30 seconds, rounded up</option>
+              <option value={60}>60 seconds, rounded up</option>
+            </select>
+          </Field>
           <label className="flex cursor-pointer items-center gap-3">
             <input
               type="checkbox"
@@ -237,10 +240,10 @@ export default function Settings({ user }) {
           className="mt-4 rounded-[10px] px-3 py-2.5 text-[12px]"
           style={{ background: "var(--surface-sunken)", color: "var(--text-muted)" }}
         >
-          <strong style={{ color: "var(--text-secondary)" }}>Both checkboxes above are unconfirmed with Telecard.</strong>{" "}
-          Most Pakistani carriers bill in whole minutes, which roughly doubles the cost of a
-          short satisfied call — a 26-second call goes from about Rs 1.27 to Rs 2.49. Worth
-          confirming before quoting anyone a per-call figure.
+          <strong style={{ color: "var(--text-secondary)" }}>Both settings above are unconfirmed with Telecard.</strong>{" "}
+          The pulse matters most: a 26-second satisfied call costs about Rs 1.28 billed by the
+          second, Rs 1.42 on a 30-second pulse, and Rs 2.50 on a 60-second one. Most calls are
+          short satisfied ones, so this roughly doubles the per-call figure at the top end.
         </div>
 
         <p className="mt-3 text-[12px]" style={{ color: "var(--text-muted)" }}>

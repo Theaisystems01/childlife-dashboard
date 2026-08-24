@@ -15,8 +15,9 @@ IVR and AI are exclusive: a minute is one or the other, never both. So a call th
 reaches the AI is charged carrier + IVR for its whole length, and a call that does is
 charged AI for the conversation and IVR only for the menu that preceded it.
 
-Two things are still unconfirmed with Telecard and are therefore settings rather than
-constants — see CARRIER_BILLING_INCREMENT and charge_unanswered below.
+The carrier bills in pulses rounded up, commonly 30 or 60 seconds. Which one, and
+whether an unanswered call is charged at all, are still unconfirmed — so both are
+settings rather than constants. See carrier_pulse_seconds and charge_unanswered.
 """
 
 from __future__ import annotations
@@ -38,12 +39,13 @@ class Tariff:
     ivr_pkr_per_min: float = DEFAULT_IVR_PKR_PER_MIN
     ai_pkr_per_min: float = DEFAULT_AI_PKR_PER_MIN
 
-    # UNCONFIRMED with Telecard. Most Pakistani carriers bill in whole minutes rounded
-    # up, which would make a 26-second satisfied call cost a full minute — materially
-    # worse than the per-second figure, and worth knowing before quoting anyone.
-    # Applied to the carrier leg only: the IVR and AI rates are ours, not the carrier's,
-    # so there is no reason to round them.
-    carrier_bills_whole_minutes: bool = False
+    # Pakistani carriers bill in pulses, commonly 30 or 60 seconds, rounded up. 0 means
+    # bill the exact duration. Applied to the carrier leg only — the IVR and AI rates are
+    # ours, not the carrier's, so there is no reason to round them.
+    #
+    # This matters more than it looks: on a 60-second pulse a 26-second satisfied call
+    # costs a full minute, which is most of the calls.
+    carrier_pulse_seconds: int = 0
 
     # UNCONFIRMED with Telecard. Carriers normally do not charge for a call that was
     # never answered, which is what makes three retry attempts affordable. If they do,
@@ -60,15 +62,25 @@ class Tariff:
             ),
             ivr_pkr_per_min=float(doc.get("rate_ivr_pkr_per_min", DEFAULT_IVR_PKR_PER_MIN)),
             ai_pkr_per_min=float(doc.get("rate_ai_pkr_per_min", DEFAULT_AI_PKR_PER_MIN)),
-            carrier_bills_whole_minutes=bool(doc.get("carrier_bills_whole_minutes", False)),
+            carrier_pulse_seconds=int(
+                doc.get(
+                    "carrier_pulse_seconds",
+                    # Older settings documents stored a boolean.
+                    60 if doc.get("carrier_bills_whole_minutes") else 0,
+                )
+            ),
             charge_unanswered=bool(doc.get("charge_unanswered", False)),
         )
 
 
-def _billable(minutes: float, whole_minutes: bool) -> float:
+def _billable(minutes: float, pulse_seconds: int) -> float:
+    """Round up to the next whole pulse. A 0 pulse bills the exact duration."""
     if minutes <= 0:
         return 0.0
-    return float(math.ceil(minutes)) if whole_minutes else minutes
+    if pulse_seconds <= 0:
+        return minutes
+    pulse_minutes = pulse_seconds / 60.0
+    return math.ceil(minutes / pulse_minutes) * pulse_minutes
 
 
 def cost_breakdown(
@@ -93,9 +105,7 @@ def cost_breakdown(
     # Whatever was not spent with the model was spent in the menu.
     ivr = max(0.0, duration - ai)
 
-    carrier = tariff.carrier_pkr_per_min * _billable(
-        duration, tariff.carrier_bills_whole_minutes
-    )
+    carrier = tariff.carrier_pkr_per_min * _billable(duration, tariff.carrier_pulse_seconds)
     ivr_cost = tariff.ivr_pkr_per_min * ivr
     ai_cost = tariff.ai_pkr_per_min * ai
 
