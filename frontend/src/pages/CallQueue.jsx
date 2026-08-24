@@ -14,6 +14,36 @@ function StatusBadge({ status }) {
   );
 }
 
+/** How the queue is spread across retry attempts — "kitne retry pe hain". */
+function AttemptBreakdown({ byAttempt }) {
+  if (!byAttempt) return null;
+  const entries = Object.entries(byAttempt)
+    .map(([attempts, count]) => [Number(attempts), count])
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => a[0] - b[0]);
+  if (!entries.length) return null;
+
+  const label = (n) =>
+    n === 0 ? "Not yet called" : n === 1 ? "After 1 attempt" : `After ${n} attempts`;
+
+  return (
+    <Card title="Retry breakdown" subtitle="Patients grouped by how many times we have called them">
+      <div className="flex flex-wrap gap-2">
+        {entries.map(([attempts, count]) => (
+          <span
+            key={attempts}
+            className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px]"
+            style={{ background: "var(--surface-sunken)" }}
+          >
+            <span style={{ color: "var(--text-muted)" }}>{label(attempts)}</span>
+            <span className="tnum font-medium" style={{ color: "var(--text-primary)" }}>{count}</span>
+          </span>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function formatWhen(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -86,8 +116,20 @@ function Upload({ onDone }) {
             e.target.value = "";
           }}
         />
+        {/* An explicit button as well as the drop zone. The dashed area alone did not
+            read as something you could click. */}
+        <Button
+          variant="primary"
+          disabled={busy}
+          onClick={(e) => {
+            e.stopPropagation();
+            inputRef.current?.click();
+          }}
+        >
+          {busy ? "Reading the sheet…" : "Choose .xlsx file"}
+        </Button>
         <div className="text-[13.5px]" style={{ color: "var(--text-secondary)" }}>
-          {busy ? "Reading the sheet…" : "Drop the spreadsheet here, or click to choose"}
+          …or drop the spreadsheet here
         </div>
         <div className="text-[12px]" style={{ color: "var(--text-muted)" }}>
           Needs a Phone Number column. Patient Name, MR Number and ER name are recommended.
@@ -173,12 +215,20 @@ export default function CallQueue({ filters }) {
       {!counts ? (
         <Skeleton className="h-[124px]" />
       ) : (
-        <StatStrip>
-          <Stat label="Awaiting first call" value={counts.pending} hint="Uploaded, never contacted" />
-          <Stat label="Needs retry" value={counts.attempted} hint="Called, but nothing captured" />
-          <Stat label="Completed" value={counts.completed} accent="var(--good)" hint="Feedback captured" />
-          <Stat label="Due now" value={queue?.total_due ?? 0} hint="Total still to call" />
-        </StatStrip>
+        <>
+          <StatStrip>
+            <Stat label="Awaiting first call" value={counts.pending} hint="Uploaded, never contacted" />
+            <Stat label="Needs retry" value={counts.attempted} hint="Called, but never connected" />
+            <Stat label="Completed" value={counts.completed} accent="var(--good)" hint="Feedback captured" />
+            <Stat label="Due now" value={queue?.total_due ?? 0} hint="Ready to dial this moment" />
+            <Stat
+              label="Retry scheduled"
+              value={queue?.retries_waiting ?? 0}
+              hint="Waiting out the retry gap"
+            />
+          </StatStrip>
+          <AttemptBreakdown byAttempt={queue?.by_attempt} />
+        </>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">

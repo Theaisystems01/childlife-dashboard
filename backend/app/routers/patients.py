@@ -24,6 +24,9 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 # Column headings accepted in the upload. The first entry of each list is what the
 # template ships with; the rest are aliases, so a sheet exported from a different
 # system still imports without being reformatted by hand.
+# visit_reason / visit_date were removed 2026-08-24: ChildLife confirmed they will not
+# be supplying those two columns in the call list. The outbound agent no longer refers to
+# the reason for the visit either — see _build_outbound_instructions in the agent repo.
 COLUMN_ALIASES: dict[str, list[str]] = {
     "phone_number": ["phone number", "contact number", "phone", "contact", "mobile", "cell"],
     "patient_name": ["patient name", "name", "child name", "patient"],
@@ -31,8 +34,6 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "er_name": ["er name", "er", "unit", "unit name", "hospital"],
     "patient_category": ["patient category", "category"],
     "disposition_category": ["disposition catg", "disposition category", "disposition"],
-    "visit_reason": ["visit reason", "reason for visit", "reason", "diagnosis"],
-    "visit_date": ["visit date", "date", "discharge date", "received time"],
 }
 
 REQUIRED = ["phone_number"]
@@ -78,7 +79,7 @@ async def template(_: dict[str, Any] = Depends(current_user)) -> StreamingRespon
 
     headings = [
         "Phone Number", "Patient Name", "MR Number", "ER name",
-        "Patient Category", "Disposition Catg", "Visit Reason", "Visit Date",
+        "Patient Category", "Disposition Catg",
     ]
     ws.append(headings)
     for cell in ws[1]:
@@ -88,7 +89,7 @@ async def template(_: dict[str, Any] = Depends(current_user)) -> StreamingRespon
 
     ws.append([
         "+923001234567", "Ali Khan", "MR-12345", "NIPA",
-        "ER", "Sent Home", "Bukhar aur viral symptoms", "2026-08-10",
+        "ER", "Sent Home",
     ])
 
     for i, h in enumerate(headings, start=1):
@@ -182,8 +183,6 @@ async def upload(
             "er_name": record.get("er_name", ""),
             "patient_category": record.get("patient_category", ""),
             "disposition_category": record.get("disposition_category", ""),
-            "visit_reason": record.get("visit_reason", ""),
-            "visit_date": record.get("visit_date", ""),
             "batch_id": batch_id,
             "uploaded_at": datetime.now(),
             "uploaded_by": user.get("username", ""),
@@ -273,9 +272,14 @@ async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
 
 def _clean(doc: dict[str, Any]) -> dict[str, Any]:
     doc["id"] = str(doc.pop("_id"))
-    for k in ("uploaded_at", "last_called_at"):
+    for k in ("uploaded_at", "last_called_at", "next_retry_at", "claimed_at"):
         if isinstance(doc.get(k), datetime):
             doc[k] = doc[k].isoformat()
+    # Written by dialer.py; absent on rows uploaded before retries existed.
+    doc.setdefault("attempts", 0)
+    doc.setdefault("call_status", "pending")
+    doc.setdefault("last_outcome", "")
+    doc.setdefault("next_retry_at", None)
     return doc
 
 
@@ -350,7 +354,28 @@ async def queue(
     for p in items:
         counts[p.get("derived_status", "pending")] = counts.get(p.get("derived_status", "pending"), 0) + 1
 
-    return {"items": due, "counts": counts, "total_due": len(due), "scanned": len(items)}
+    # How the queue is distributed across retry attempts, so the dashboard can answer
+    # "kitne retry pe hain" without the caller doing the arithmetic themselves.
+    by_attempt: dict[str, int] = {}
+    retries_waiting = 0
+    now = datetime.now()
+    for p in items:
+        attempts = int(p.get("attempts") or 0)
+        by_attempt[str(attempts)] = by_attempt.get(str(attempts), 0) + 1
+        nxt = p.get("next_retry_at")
+        if p.get("call_status") == "attempted" and nxt:
+            when = datetime.fromisoformat(nxt) if isinstance(nxt, str) else nxt
+            if when and when > now:
+                retries_waiting += 1
+
+    return {
+        "items": due,
+        "counts": counts,
+        "by_attempt": by_attempt,
+        "retries_waiting": retries_waiting,
+        "total_due": len(due),
+        "scanned": len(items),
+    }
 
 
 @router.get("/batches")
