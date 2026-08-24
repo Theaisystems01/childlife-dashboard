@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
+import { formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Select, Skeleton } from "../components/ui";
 
 const COLUMNS = [
@@ -55,14 +56,6 @@ function formatDuration(minutes) {
 function pkr(value) {
   const n = Number(value) || 0;
   return `Rs ${n.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function formatWhen(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? iso
-    : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export default function Calls({ filters }) {

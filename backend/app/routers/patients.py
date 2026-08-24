@@ -211,7 +211,7 @@ async def upload(
         "updated": updated,
         "skipped": skipped,
         "problems": problems,
-        "total_patients": await collection.count_documents({}),
+        "total_patients": await collection.count_documents({"archived": {"$ne": True}}),
     }
 
 
@@ -293,7 +293,7 @@ async def list_patients(
     limit: int = Query(25, ge=1, le=200),
     _: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
-    query: dict[str, Any] = {}
+    query: dict[str, Any] = {"archived": {"$ne": True}}
     if er:
         query["er_name"] = er
     if batch_id:
@@ -337,7 +337,7 @@ async def queue(
     _: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     """Patients still due a call, oldest upload first."""
-    query: dict[str, Any] = {}
+    query: dict[str, Any] = {"archived": {"$ne": True}}
     if er:
         query["er_name"] = er
 
@@ -382,6 +382,7 @@ async def queue(
 async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     """Upload history, newest first."""
     pipeline = [
+        {"$match": {"archived": {"$ne": True}}},
         {"$group": {
             "_id": "$batch_id",
             "count": {"$sum": 1},

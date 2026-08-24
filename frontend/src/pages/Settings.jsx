@@ -48,7 +48,7 @@ function HourSelect({ label, value, onChange }) {
   );
 }
 
-export default function Settings() {
+export default function Settings({ user }) {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -97,6 +97,7 @@ export default function Settings() {
   if (!form) return <Skeleton className="h-[420px]" />;
 
   const retryCount = Math.max(0, (form.max_attempts || 1) - 1);
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="flex max-w-[720px] flex-col gap-5">
@@ -176,6 +177,10 @@ export default function Settings() {
         </p>
       </Card>
 
+      {/* Rates are commercial, not operational. Hidden from viewer accounts — the
+          server enforces the same rule, since hiding a card does not stop anyone
+          PUTting to the endpoint. */}
+      {isAdmin && (
       <Card title="Costing" subtitle="Rates the dashboard bills on, in rupees per minute">
         <div className="flex flex-wrap gap-4">
           <NumberField
@@ -243,6 +248,7 @@ export default function Settings() {
           is recorded separately in USD and is not affected by these rates.
         </p>
       </Card>
+      )}
 
       <Card title="Pause" subtitle="Stop placing new calls without losing the queue">
         <label className="flex cursor-pointer items-center gap-3">

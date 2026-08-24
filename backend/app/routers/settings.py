@@ -24,6 +24,20 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 SETTINGS_ID = "dialer"
 
+# Commercial rates. Visible and editable by admins only — a viewer account should be
+# able to run the calling operation without seeing what it is billed at.
+COSTING_FIELDS = (
+    "rate_carrier_pkr_per_min",
+    "rate_ivr_pkr_per_min",
+    "rate_ai_pkr_per_min",
+    "carrier_bills_whole_minutes",
+    "charge_unanswered",
+)
+
+
+def _is_admin(user: dict[str, Any]) -> bool:
+    return (user.get("role") or "viewer") == "admin"
+
 
 class DialerSettings(BaseModel):
     """Bounds are enforced here rather than in the UI so a hand-crafted request cannot
@@ -98,16 +112,24 @@ def collection():
 
 
 @router.get("")
-async def read_settings(_: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+async def read_settings(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     doc = await collection().find_one({"_id": SETTINGS_ID})
     if not doc:
-        return DialerSettings().model_dump()
-    doc.pop("_id", None)
-    doc.pop("updated_at", None)
-    doc.pop("updated_by", None)
-    # Anything missing falls back to the model default rather than erroring, so adding
-    # a new field does not break an existing saved document.
-    return DialerSettings(**{k: v for k, v in doc.items() if k in DialerSettings.model_fields}).model_dump()
+        settings = DialerSettings().model_dump()
+    else:
+        doc.pop("_id", None)
+        doc.pop("updated_at", None)
+        doc.pop("updated_by", None)
+        # Anything missing falls back to the model default rather than erroring, so
+        # adding a new field does not break an existing saved document.
+        settings = DialerSettings(
+            **{k: v for k, v in doc.items() if k in DialerSettings.model_fields}
+        ).model_dump()
+
+    if not _is_admin(user):
+        for field in COSTING_FIELDS:
+            settings.pop(field, None)
+    return settings
 
 
 @router.put("")
@@ -116,15 +138,32 @@ async def write_settings(
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     settings = payload.validated()
+    update = settings.model_dump()
+
+    if not _is_admin(user):
+        # A viewer's form never showed the rates, so whatever it submitted for them is
+        # the model default rather than an intentional change. Keep what is stored;
+        # hiding the card in the UI is not on its own a control.
+        stored = await collection().find_one({"_id": SETTINGS_ID}) or {}
+        for field in COSTING_FIELDS:
+            if field in stored:
+                update[field] = stored[field]
+            else:
+                update.pop(field, None)
+
     await collection().update_one(
         {"_id": SETTINGS_ID},
         {
             "$set": {
-                **settings.model_dump(),
+                **update,
                 "updated_at": datetime.now(),
                 "updated_by": user.get("username", ""),
             }
         },
         upsert=True,
     )
-    return settings.model_dump()
+
+    if not _is_admin(user):
+        for field in COSTING_FIELDS:
+            update.pop(field, None)
+    return update

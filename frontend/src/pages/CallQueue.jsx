@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Segmented, Select, Skeleton, Stat, StatStrip } from "../components/ui";
 
 const STATUS_TONE = { pending: "accent", attempted: "warning", completed: "good" };
@@ -42,12 +43,6 @@ function AttemptBreakdown({ byAttempt }) {
       </div>
     </Card>
   );
-}
-
-function formatWhen(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /** Drag-and-drop upload for the patient sheet. */

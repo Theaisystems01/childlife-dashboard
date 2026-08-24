@@ -98,7 +98,7 @@ export default function App() {
           </header>
 
           <div key={tab} className="animate-in">
-            <Component filters={filters} />
+            <Component filters={filters} user={user} />
           </div>
         </main>
       </div>

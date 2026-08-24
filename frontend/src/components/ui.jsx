@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Children, useEffect, useState } from "react";
 
 export function Card({ title, subtitle, action, children, className = "", padded = true }) {
   return (
@@ -61,10 +61,26 @@ export function Stat({ label, value, hint, accent }) {
  * The dividers are a 1px grid gap showing the container's background through it —
  * `divide-x` puts borders in the wrong place once a grid wraps to a second row.
  */
+/**
+ * Column count follows the number of stats, so five of them fill one row instead of
+ * leaving a lone card stranded under three empty cells. Tailwind needs literal class
+ * names, hence the lookup rather than a template string.
+ */
+const STAT_COLUMNS = {
+  1: "xl:grid-cols-1",
+  2: "sm:grid-cols-2",
+  3: "sm:grid-cols-2 xl:grid-cols-3",
+  4: "sm:grid-cols-2 xl:grid-cols-4",
+  5: "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5",
+  6: "sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6",
+};
+
 export function StatStrip({ children }) {
+  const count = Children.toArray(children).filter(Boolean).length;
+  const columns = STAT_COLUMNS[count] || "sm:grid-cols-2 xl:grid-cols-4";
   return (
     <div
-      className="grid grid-cols-1 gap-px overflow-hidden rounded-[14px] border sm:grid-cols-2 xl:grid-cols-4"
+      className={`grid grid-cols-1 gap-px overflow-hidden rounded-[14px] border ${columns}`}
       style={{ background: "var(--border)", borderColor: "var(--border)" }}
     >
       {children}
@@ -74,7 +90,13 @@ export function StatStrip({ children }) {
 
 export function Button({ variant = "default", className = "", ...props }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-[10px] px-3.5 py-2 text-[13px] font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-[0.985]";
+    // cursor-pointer and a hover state were both missing, which is why these did not
+    // read as clickable. The brightness shift works over any of the variant
+    // backgrounds without needing a per-variant hover colour.
+    "inline-flex cursor-pointer select-none items-center justify-center gap-2 rounded-[10px] px-3.5 py-2 text-[13px] font-medium transition-all duration-150 " +
+    "hover:brightness-[0.95] active:brightness-[0.90] active:scale-[0.97] " +
+    "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100 disabled:active:scale-100 " +
+    "focus-visible:outline-2 focus-visible:outline-offset-2";
   const styles = {
     default: {
       background: "var(--surface-raised)",
@@ -90,7 +112,20 @@ export function Button({ variant = "default", className = "", ...props }) {
     },
     ghost: { background: "transparent", color: "var(--text-secondary)", border: "1px solid transparent" },
   };
-  return <button className={`${base} ${className}`} style={{ ...styles[variant], outlineColor: "var(--accent)" }} {...props} />;
+  // brightness() over a transparent background is a no-op, so the ghost variant needs
+  // an actual hover fill or it stays dead to the pointer.
+  const hover = {
+    default: "",
+    primary: "",
+    ghost: "hover:bg-[var(--surface-sunken)] hover:brightness-100 active:brightness-100",
+  };
+  return (
+    <button
+      className={`${base} ${hover[variant] || ""} ${className}`}
+      style={{ ...styles[variant], outlineColor: "var(--accent)" }}
+      {...props}
+    />
+  );
 }
 
 /** Segmented control — the filter row's primary affordance. */

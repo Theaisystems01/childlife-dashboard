@@ -30,7 +30,9 @@ def build_filter(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
 ) -> dict[str, Any]:
-    query: dict[str, Any] = {}
+    # Archived records stay in Mongo but are invisible to the dashboard. Used to clear
+    # test and demo history without destroying it — unset the flag and it comes back.
+    query: dict[str, Any] = {"archived": {"$ne": True}}
 
     if status:
         query["status"] = status
@@ -141,7 +143,7 @@ async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str,
 async def get_call(
     session_id: str, _: dict[str, Any] = Depends(current_user)
 ) -> dict[str, Any]:
-    doc = await calls().find_one({"session_id": session_id})
+    doc = await calls().find_one({"session_id": session_id, "archived": {"$ne": True}})
     if not doc:
         raise HTTPException(status_code=404, detail="Call not found")
 
