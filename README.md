@@ -1,16 +1,27 @@
 # ChildLife Feedback Reporting
 
-Dashboard over the inbound feedback line. Reads the same MongoDB the
-`childlife-agent` voice agent writes to (`childlife-foundation.conversation-logs`)
-and presents it in the foundation's reporting format.
+Dashboard over the ChildLife patient feedback line. Reads the same MongoDB the
+voice agent writes to (`childlife-foundation`), presents it in the foundation's
+reporting format, and drives the outbound calling: patient upload, the call
+queue, retry policy and calling hours.
 
-Built alongside `childlife-dashboard/` (the Streamlit outbound dialer), which is
-untouched.
+The voice agent and dialler live in a separate repository
+(`ChildLifeOutbound`, branch `voicebot-outbound`). This one is the web side.
 
 ```
 backend/    FastAPI + motor + JWT auth
 frontend/   React + Vite + Tailwind v4
 ```
+
+## Pages
+
+| Page | What it does |
+|---|---|
+| Overview | Call volume, complaint breakdown, outcomes, cost in PKR |
+| Call records | Every call, searchable and filterable, with transcripts and Excel export |
+| Call queue | Patient upload, upload history, queue state, retry breakdown |
+| Settings | Retries, concurrency, calling hours, pause, and the billing rates |
+| Help | User guide with screenshots — one section for staff, one for operators |
 
 ## Reporting format
 
@@ -88,17 +99,39 @@ All routes except `/api/health` require `Authorization: Bearer <token>`.
 | GET | `/api/calls/filters` | Distinct values actually present |
 | GET | `/api/calls/{session_id}` | One call + transcript + metrics |
 | GET | `/api/stats/overview` | KPIs, breakdowns, daily trend |
-| GET | `/api/export/xlsx` | Excel in the report column order |
+| GET | `/api/export/xlsx` | Excel in the report column order, times in PKT |
+| GET | `/api/patients` | Paged patient list |
+| GET | `/api/patients/queue` | Who is still due a call, plus retry breakdown |
+| GET | `/api/patients/batches` | Upload audit trail |
+| GET | `/api/patients/template` | Blank upload sheet |
+| POST | `/api/patients/upload` | Import an .xlsx patient list |
+| GET | `/api/settings` | Dialler settings (rates omitted without access) |
+| PUT | `/api/settings` | Update them |
 
 `/api/calls` and `/api/export/xlsx` accept `search`, `status`, `category`, `er`,
 `direction`, `days`.
 
-## Users and roles
+`POST /api/patients/upload` takes the file plus `recall_existing` (default true):
+true means a new round of calls and puts everyone in the sheet back in the queue,
+false means a correction and leaves call progress alone.
 
-`seed_user.py` writes `admin` or `viewer` into the user document. **The roles are
-stored but not yet enforced** — every signed-in user currently sees every route,
-including patient names and transcripts. If you need viewers restricted to
+## Users and access
+
+`seed_user.py` writes `admin` or `viewer` into the user document. **The role is
+stored but is not enforced on most routes** — every signed-in user sees the call
+records, patient names and transcripts. If you need viewers restricted to
 aggregate charts, that check still has to be added to the route dependencies.
+
+The one thing that *is* enforced is costing. The billing rates are gated on a
+per-account `can_manage_costing` flag, deliberately separate from the role so an
+operations admin can run the calling without seeing the margin. Without the flag
+the rate fields are stripped from `GET /api/settings` and a `PUT` cannot change
+them, so hiding the card in the UI is not the only control:
+
+```js
+db.getCollection("dashboard-users").updateOne(
+    {username: "someone"}, {$set: {can_manage_costing: true}})
+```
 
 Disable an account without deleting it:
 
@@ -111,10 +144,21 @@ than when the token expires.
 
 ## Notes on the data
 
-- **Legacy records.** Three older calls carry `Treatment/Doctor` as a complaint
-  category, which is not one of the three valid values. They pre-date the
-  taxonomy fix in the agent; new calls are clean. They will show up in the
-  category filter until they are corrected or removed.
-- **Cost** is `cost.total_cost` per call. Realtime-era records mostly show `0.0`.
+- **Two cost figures, deliberately.** `cost.total_cost` on each call record is the
+  raw USD provider spend and is **never sent to the browser** — it is our margin,
+  not the foundation's business. What the dashboard shows is a rupee figure
+  computed from the tariff in Settings (carrier / menu / AI per minute). Internal
+  margin reporting lives in `scripts/margin_report.py` in the agent repo.
+- **AI minutes are not call duration.** `ai_duration` is the time the model was
+  actually in the conversation. The recorded menu is free, so a satisfied caller
+  is zero AI minutes however long they were on the line, and billing leans on this
+  rather than on `duration`.
+- **Timestamps are UTC in Mongo and rendered in PKT.** Records written before
+  2026-08-24 may be naive datetimes holding Pakistan wall-clock; they are treated
+  as UTC. A *string* timestamp breaks `/api/stats/overview` outright, since the
+  aggregation uses `$dateToString`.
 - **Transcripts** live under `logs.items` and are excluded from list queries —
   they are only fetched when a call is opened.
+- **Archived records.** Anything with `archived: true` is invisible to the
+  dashboard, the export and the dialler, without being deleted. Every read of
+  `conversation-logs` and `patients` filters on it.
