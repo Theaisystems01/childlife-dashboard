@@ -38,8 +38,12 @@ function InputBadge({ input, connected }) {
   if (!connected) {
     return <span className="text-[13px]" style={{ color: "var(--text-muted)" }}>{input || "—"}</span>;
   }
-  const tone = input === "Satisfied" ? "good" : input === "Dissatisfied" ? "critical" : undefined;
-  return <Badge tone={tone}>{input || "—"}</Badge>;
+  const tone =
+    input === "Satisfied" ? "good"
+    : input === "Dissatisfied" ? "critical"
+    : input === "Hung up" ? "warning"
+    : undefined;
+  return <Badge tone={tone}>{input || "\u2014"}</Badge>;
 }
 
 /** "1.77" minutes is not a thing anyone says out loud. Render it as 1m 46s. */

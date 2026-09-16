@@ -108,7 +108,12 @@ def input_label(doc: dict[str, Any]) -> str:
         return "Satisfied"
     if selection == "2" or doc.get("satisfied") is False:
         return "Dissatisfied"
-    return "Silent"
+    # Answering and ringing off is not the same as sitting through the menu and
+    # pressing nothing. The first points at the opening, the second at the
+    # instructions, and folding them together hides which one needs attention.
+    if doc.get("caller_hung_up") or doc.get("status") == "abandoned":
+        return "Hung up"
+    return "No key pressed"
 
 
 def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[str, Any]:
@@ -143,6 +148,7 @@ def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[s
         "ai_minutes": ai_minutes,
         "ai_engaged": bool(doc.get("ai_engaged")),
         "attempt": int(doc.get("attempt") or 1),
+        "caller_hung_up": bool(doc.get("caller_hung_up")),
         # Only the rupee figure crosses the wire. Raw USD provider spend stays in
         # Mongo for internal margin reporting (scripts/margin_report.py in the agent
         # repo) — it is deliberately not sent to the dashboard, which is the client's.
