@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { formatWhen } from "../lib/time";
-import { Badge, Button, Card, EmptyState, Field, Input, Select, Skeleton } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Pagination, Select, Skeleton } from "../components/ui";
 
 const COLUMNS = [
   "Phone Number",
@@ -206,16 +206,14 @@ export default function Calls({ filters }) {
           </div>
         )}
 
-        {data && data.pages > 1 && (
-          <div className="mt-4 flex items-center justify-between">
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              Page {data.page} of {data.pages}
-            </span>
-            <div className="flex gap-2">
-              <Button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>Previous</Button>
-              <Button onClick={() => setPage((p) => Math.min(data.pages, p + 1))} disabled={page >= data.pages}>Next</Button>
-            </div>
-          </div>
+        {data && (
+          <Pagination
+            page={data.page}
+            pages={data.pages}
+            total={data.total}
+            onPage={setPage}
+            unit="calls"
+          />
         )}
       </Card>
 

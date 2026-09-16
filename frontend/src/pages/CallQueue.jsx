@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { formatRelative, formatWhen } from "../lib/time";
-import { Badge, Button, Card, EmptyState, Field, Input, Segmented, Select, Skeleton, Stat, StatStrip } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Pagination, Segmented, Select, Skeleton, Stat, StatStrip, paginate } from "../components/ui";
 
 const STATUS_TONE = {
   pending: "accent",
@@ -64,8 +64,11 @@ function AttemptBreakdown({ byAttempt }) {
  * been removed — otherwise clearing the queue also erases any trace that the upload
  * ever happened.
  */
+const UPLOADS_PER_PAGE = 5;
+
 function UploadHistory({ reload }) {
   const [rows, setRows] = useState(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,8 +76,13 @@ function UploadHistory({ reload }) {
     return () => { cancelled = true; };
   }, [reload]);
 
+  // A new upload belongs at the top, so go back to the first page when one lands.
+  useEffect(() => setPage(1), [reload]);
+
   if (!rows) return <Skeleton className="h-[120px]" />;
   if (!rows.length) return null;
+
+  const shown = paginate(rows, page, UPLOADS_PER_PAGE);
 
   return (
     <Card title="Upload history" subtitle="Every patient sheet imported, newest first">
@@ -90,7 +98,7 @@ function UploadHistory({ reload }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((b) => (
+            {shown.slice.map((b) => (
               <tr key={b.batch_id} style={{ borderBottom: "1px solid var(--border)" }}>
                 <td className="max-w-[240px] truncate px-3 py-2.5" title={b.filename || b.batch_id}>
                   {b.filename || <span style={{ color: "var(--text-muted)" }}>{b.batch_id}</span>}
@@ -116,6 +124,13 @@ function UploadHistory({ reload }) {
           </tbody>
         </table>
       </div>
+      <Pagination
+        page={shown.page}
+        pages={shown.pages}
+        total={shown.total}
+        onPage={setPage}
+        unit="uploads"
+      />
     </Card>
   );
 }
@@ -286,8 +301,11 @@ function Upload({ onDone }) {
   );
 }
 
+const PATIENTS_PER_PAGE = 15;
+
 export default function CallQueue({ filters }) {
   const [tab, setTab] = useState("queue");
+  const [patientPage, setPatientPage] = useState(1);
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [er, setEr] = useState("");
@@ -299,6 +317,10 @@ export default function CallQueue({ filters }) {
     const t = setTimeout(() => setDebounced(search), 300);
     return () => clearTimeout(t);
   }, [search]);
+
+  // Switching tab or filter changes what is being listed, so start at page one
+  // rather than stranding the reader on a page that no longer exists.
+  useEffect(() => setPatientPage(1), [tab, er, debounced, reload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,15 +334,23 @@ export default function CallQueue({ filters }) {
     let cancelled = false;
     setAll(null);
     api
-      .patients({ search: debounced, er, limit: 50 })
+      .patients({ search: debounced, er, page: patientPage, limit: PATIENTS_PER_PAGE })
       .then((d) => !cancelled && setAll(d))
       .catch(() => !cancelled && setAll(false));
     return () => { cancelled = true; };
-  }, [tab, debounced, er, reload]);
+  }, [tab, debounced, er, reload, patientPage]);
 
   const counts = queue?.counts;
-  const rows = tab === "queue" ? queue?.items : all?.items;
   const loading = tab === "queue" ? queue === null : all === null;
+
+  // The queue arrives in one response, so it pages in the browser. "All patients" is
+  // already paged by the server, so that one just follows its own page number.
+  const allRows = tab === "queue" ? queue?.items : all?.items;
+  const shown =
+    tab === "queue"
+      ? paginate(allRows, patientPage, PATIENTS_PER_PAGE)
+      : { slice: allRows || [], page: all?.page ?? 1, pages: all?.pages ?? 1, total: all?.total ?? 0 };
+  const rows = shown.slice;
 
   return (
     <div className="flex flex-col gap-6">

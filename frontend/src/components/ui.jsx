@@ -261,6 +261,45 @@ export function useTheme() {
   return [theme, setTheme];
 }
 
+/**
+ * Table pager, shared so every table behaves the same way.
+ *
+ * Renders nothing for a single page, so a short table is not cluttered by controls
+ * that cannot do anything.
+ */
+export function Pagination({ page, pages, total, onPage, unit = "rows" }) {
+  if (!pages || pages <= 1) return null;
+  return (
+    <div className="mt-4 flex items-center justify-between gap-3">
+      <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+        Page {page} of {pages}
+        {total != null && ` \u00b7 ${total} ${unit}`}
+      </span>
+      <div className="flex gap-2">
+        <Button onClick={() => onPage(Math.max(1, page - 1))} disabled={page <= 1}>
+          Previous
+        </Button>
+        <Button onClick={() => onPage(Math.min(pages, page + 1))} disabled={page >= pages}>
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Slice an in-memory list into pages. For tables whose data arrives in one go. */
+export function paginate(rows, page, perPage) {
+  const list = rows || [];
+  const pages = Math.max(1, Math.ceil(list.length / perPage));
+  const safe = Math.min(Math.max(1, page), pages);
+  return {
+    slice: list.slice((safe - 1) * perPage, safe * perPage),
+    page: safe,
+    pages,
+    total: list.length,
+  };
+}
+
 export function Skeleton({ className = "" }) {
   return <div className={`animate-pulse rounded-[10px] ${className}`} style={{ background: "var(--surface-sunken)" }} />;
 }
