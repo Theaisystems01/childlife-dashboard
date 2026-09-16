@@ -14,7 +14,7 @@ from openpyxl.utils import get_column_letter
 from .. import phones
 from ..db import calls, get_db
 from ..security import current_user
-from ..timeutil import iso_utc
+from ..timeutil import as_utc, iso_utc, utcnow
 
 router = APIRouter(prefix="/api/patients", tags=["patients"])
 
@@ -222,7 +222,7 @@ async def upload(
             "disposition_category": record.get("disposition_category", ""),
             "batch_id": batch_id,
             "source_file": file.filename or "",
-            "uploaded_at": datetime.now(),
+            "uploaded_at": utcnow(),
             "uploaded_by": user.get("username", ""),
             # Uploading someone is an explicit request to call them, so un-archive on
             # the way in. Without this, re-uploading a sheet whose numbers were
@@ -287,7 +287,7 @@ async def upload(
     # it" survives the session.
     await uploads().insert_one({
         **summary,
-        "uploaded_at": datetime.now(),
+        "uploaded_at": utcnow(),
         "uploaded_by": user.get("username", ""),
         "size_bytes": len(raw),
     })
@@ -449,13 +449,14 @@ async def queue(
     # "kitne retry pe hain" without the caller doing the arithmetic themselves.
     by_attempt: dict[str, int] = {}
     retries_waiting = 0
-    now = datetime.now()
+    # Aware, because _clean() has already turned next_retry_at into an ISO string
+    # carrying a UTC offset. Comparing that against a naive now() raises.
+    now = utcnow()
     for p in items:
         attempts = int(p.get("attempts") or 0)
         by_attempt[str(attempts)] = by_attempt.get(str(attempts), 0) + 1
-        nxt = p.get("next_retry_at")
-        if p.get("call_status") == "attempted" and nxt:
-            when = datetime.fromisoformat(nxt) if isinstance(nxt, str) else nxt
+        if p.get("call_status") == "attempted":
+            when = as_utc(p.get("next_retry_at"))
             if when and when > now:
                 retries_waiting += 1
 

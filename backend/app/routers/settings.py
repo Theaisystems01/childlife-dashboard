@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..db import get_db
 from ..security import current_user
+from ..timeutil import utcnow
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -162,7 +163,7 @@ async def write_settings(
         {
             "$set": {
                 **update,
-                "updated_at": datetime.now(),
+                "updated_at": utcnow(),
                 "updated_by": user.get("username", ""),
             }
         },

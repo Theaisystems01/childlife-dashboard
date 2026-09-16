@@ -23,3 +23,28 @@ def iso_utc(value: Any) -> str | None:
         # Naive values out of Mongo are UTC; that is what was written.
         value = value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc).isoformat()
+
+
+def as_utc(value: Any) -> datetime | None:
+    """Coerce a datetime, or an ISO string, to timezone-aware UTC.
+
+    Values reach this code in three shapes: aware datetimes written by the agent,
+    naive ones handed back by pymongo, and ISO strings already serialised by
+    iso_utc(). Comparing across those shapes raises "can't compare offset-naive and
+    offset-aware datetimes", so everything is normalised before it is used.
+    """
+    if isinstance(value, str) and value:
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def utcnow() -> datetime:
+    """Timezone-aware now, for comparing against stored timestamps."""
+    return datetime.now(timezone.utc)

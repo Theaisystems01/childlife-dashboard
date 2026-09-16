@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from ..db import calls, get_db
 from ..pricing import Tariff
 from ..reporting import extract_transcript, to_call_summary
+from ..timeutil import utcnow
 from ..security import current_user
 
 router = APIRouter(prefix="/api/calls", tags=["calls"])
@@ -56,7 +57,9 @@ def build_filter(
 
     window: dict[str, Any] = {}
     if days:
-        window["$gte"] = datetime.now() - timedelta(days=days)
+        # UTC, because that is what is stored. Using the host clock here meant the
+        # "last N days" window was shifted by the local offset.
+        window["$gte"] = utcnow() - timedelta(days=days)
     if date_from:
         window["$gte"] = date_from
     if date_to:
