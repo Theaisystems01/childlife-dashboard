@@ -14,6 +14,7 @@ from openpyxl.utils import get_column_letter
 from .. import phones
 from ..db import calls, get_db
 from ..security import current_user
+from ..timeutil import iso_utc
 
 router = APIRouter(prefix="/api/patients", tags=["patients"])
 
@@ -345,7 +346,7 @@ async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
         if latest:
             ts = latest.get("timestamp")
             p["last_call"] = {
-                "at": ts.isoformat() if isinstance(ts, datetime) else None,
+                "at": iso_utc(ts),
                 "status": latest.get("status", ""),
                 "session_id": latest.get("session_id", ""),
                 "satisfied": latest.get("satisfied"),
@@ -364,7 +365,7 @@ def _clean(doc: dict[str, Any]) -> dict[str, Any]:
     doc["id"] = str(doc.pop("_id"))
     for k in ("uploaded_at", "last_called_at", "next_retry_at", "claimed_at"):
         if isinstance(doc.get(k), datetime):
-            doc[k] = doc[k].isoformat()
+            doc[k] = iso_utc(doc[k])
     # Written by dialer.py; absent on rows uploaded before retries existed.
     doc.setdefault("attempts", 0)
     doc.setdefault("call_status", "pending")
@@ -480,13 +481,26 @@ async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, A
     async for row in uploads().find().sort("uploaded_at", -1).limit(30):
         audit[row.get("batch_id", "")] = row
 
-    # How many rows from each batch are still present.
+    # Two different numbers, and conflating them was the bug: how many rows from the
+    # batch are still in the system at all, versus how many are still waiting to be
+    # called. A batch whose calls have all completed was reporting its whole size as
+    # "still in queue".
     live: dict[str, int] = {}
+    waiting: dict[str, int] = {}
     async for row in patients().aggregate([
         {"$match": {"archived": {"$ne": True}}},
-        {"$group": {"_id": "$batch_id", "count": {"$sum": 1}}},
+        {"$group": {
+            "_id": "$batch_id",
+            "count": {"$sum": 1},
+            "waiting": {"$sum": {"$cond": [
+                {"$in": [{"$ifNull": ["$call_status", "pending"]},
+                         ["pending", "in_progress", "attempted"]]},
+                1, 0,
+            ]}},
+        }},
     ]):
         live[row["_id"]] = row["count"]
+        waiting[row["_id"]] = row.get("waiting", 0)
 
     out: list[dict[str, Any]] = []
     for batch_id, row in audit.items():
@@ -494,15 +508,18 @@ async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, A
         out.append({
             "batch_id": batch_id,
             "filename": row.get("filename", ""),
-            "uploaded_at": ts.isoformat() if isinstance(ts, datetime) else None,
+            "uploaded_at": iso_utc(ts),
             "uploaded_by": row.get("uploaded_by", ""),
             "rows_read": row.get("rows_read", 0),
             "created": row.get("created", 0),
             "updated": row.get("updated", 0),
             "skipped": row.get("skipped", 0),
             "duplicates": row.get("duplicates", 0),
-            # Present now, as opposed to how many the sheet contained.
+            # Rows from this batch still in the system, as opposed to how many the
+            # sheet contained.
             "count": live.get(batch_id, 0),
+            # Of those, how many have not yet been reached.
+            "waiting": waiting.get(batch_id, 0),
         })
 
     # Batches predating the audit collection still have patients pointing at them.
@@ -512,6 +529,7 @@ async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, A
                 "batch_id": batch_id, "filename": "", "uploaded_at": None,
                 "uploaded_by": "", "rows_read": 0, "created": 0, "updated": 0,
                 "skipped": 0, "duplicates": 0, "count": count,
+                "waiting": waiting.get(batch_id, 0),
             })
 
     out.sort(key=lambda r: r["uploaded_at"] or "", reverse=True)

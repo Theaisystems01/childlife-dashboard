@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from .pricing import Tariff, cost_breakdown
+from .timeutil import iso_utc
 
 # The ChildLife feedback report, in the exact column order the foundation uses.
 REPORT_COLUMNS = [
@@ -47,7 +48,7 @@ def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
     timestamp = doc.get("timestamp")
     received = _first(output, "Received Time")
     if not received and isinstance(timestamp, datetime):
-        received = timestamp.isoformat()
+        received = iso_utc(timestamp)
 
     return {
         "Phone Number": _first(output, "Phone Number", "Contact Number")
@@ -128,7 +129,7 @@ def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[s
     return {
         "id": doc.get("session_id") or str(doc.get("_id", "")),
         "session_id": doc.get("session_id", ""),
-        "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else None,
+        "timestamp": iso_utc(timestamp),
         "status": doc.get("status", ""),
         "connection": connection_label(doc),
         "caller_input": input_label(doc),

@@ -70,7 +70,7 @@ function UploadHistory({ reload }) {
         <table className="w-full text-[13px]">
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              {["File", "Uploaded", "By", "Rows", "Added", "Updated", "Duplicates", "Skipped", "Still in queue"].map((h) => (
+              {["File", "Uploaded", "By", "Rows", "Added", "Updated", "Duplicates", "Skipped", "Still to call"].map((h) => (
                 <th key={h} className="whitespace-nowrap px-3 py-2.5 text-left font-medium" style={{ color: "var(--text-muted)" }}>
                   {h}
                 </th>
@@ -92,7 +92,13 @@ function UploadHistory({ reload }) {
                 <td className="tnum px-3 py-2.5" style={{ color: "var(--text-muted)" }}>{b.updated || "—"}</td>
                 <td className="tnum px-3 py-2.5" style={{ color: b.duplicates ? "var(--warning-ink)" : "var(--text-muted)" }}>{b.duplicates || "—"}</td>
                 <td className="tnum px-3 py-2.5" style={{ color: b.skipped ? "var(--critical)" : "var(--text-muted)" }}>{b.skipped || "—"}</td>
-                <td className="tnum px-3 py-2.5">{b.count}</td>
+                <td
+                  className="tnum px-3 py-2.5"
+                  style={{ color: b.waiting ? "var(--text-primary)" : "var(--text-muted)" }}
+                  title={`${b.count} row(s) from this upload are still in the system`}
+                >
+                  {b.waiting ? b.waiting : "\u2014"}
+                </td>
               </tr>
             ))}
           </tbody>

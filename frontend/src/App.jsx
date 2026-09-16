@@ -40,7 +40,36 @@ const PAGES = {
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
-  const [tab, setTab] = useState("overview");
+  // The page lives in the URL hash, not only in React state.
+  //
+  // Without this a refresh always landed back on Overview, and the browser's back
+  // button walked out of the app entirely rather than to the previous page. The hash
+  // is used rather than a path so no server or Vercel rewrite rule is needed.
+  const [tab, setTab] = useState(() => {
+    const fromHash = window.location.hash.replace(/^#\/?/, "");
+    return fromHash in PAGES ? fromHash : "overview";
+  });
+
+  // Keep the URL in step when the page changes, and follow the URL when the user
+  // presses back or forward.
+  useEffect(() => {
+    if (window.location.hash.replace(/^#\/?/, "") !== tab) {
+      window.history.pushState(null, "", `#/${tab}`);
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    const onNav = () => {
+      const fromHash = window.location.hash.replace(/^#\/?/, "");
+      setTab(fromHash in PAGES ? fromHash : "overview");
+    };
+    window.addEventListener("popstate", onNav);
+    window.addEventListener("hashchange", onNav);
+    return () => {
+      window.removeEventListener("popstate", onNav);
+      window.removeEventListener("hashchange", onNav);
+    };
+  }, []);
   const [filters, setFilters] = useState(null);
   const [theme, setTheme] = useTheme();
 
