@@ -3,8 +3,20 @@ import { api } from "../lib/api";
 import { formatRelative, formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Segmented, Select, Skeleton, Stat, StatStrip } from "../components/ui";
 
-const STATUS_TONE = { pending: "accent", attempted: "warning", completed: "good" };
-const STATUS_ICON = { pending: "○", attempted: "◐", completed: "✓" };
+const STATUS_TONE = {
+  pending: "accent",
+  calling: "accent",
+  attempted: "warning",
+  completed: "good",
+  unreachable: "critical",
+};
+const STATUS_ICON = {
+  pending: "○",
+  calling: "◔",
+  attempted: "◐",
+  completed: "✓",
+  unreachable: "✕",
+};
 
 function StatusBadge({ status }) {
   return (
@@ -323,6 +335,11 @@ export default function CallQueue({ filters }) {
             <Stat label="Awaiting first call" value={counts.pending} hint="Uploaded, never contacted" />
             <Stat label="Needs retry" value={counts.attempted} hint="Called, but never connected" />
             <Stat label="Completed" value={counts.completed} accent="var(--good)" hint="Feedback captured" />
+            <Stat
+              label="Unreachable"
+              value={counts.unreachable ?? 0}
+              hint="Tried and given up on"
+            />
             <Stat label="Due now" value={queue?.total_due ?? 0} hint="Ready to dial this moment" />
             <Stat
               label="Retry scheduled"

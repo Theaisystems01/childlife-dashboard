@@ -67,6 +67,21 @@ def _cell(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
+# The dialler's call_status, mapped to what the dashboard shows. Keeping the two
+# vocabularies separate means the dialler can gain states without the UI changing.
+DISPLAY_STATUS = {
+    "pending": "pending",
+    "in_progress": "calling",
+    "attempted": "attempted",
+    "completed": "completed",
+    "exhausted": "unreachable",
+    "failed": "unreachable",
+}
+
+# Still waiting on a call of some kind.
+OPEN_STATUSES = {"pending", "calling", "attempted"}
+
+
 def patients():
     return get_db()[PATIENTS_COLLECTION]
 
@@ -351,14 +366,17 @@ async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
                 "session_id": latest.get("session_id", ""),
                 "satisfied": latest.get("satisfied"),
             }
-            # Reaching a real outcome is what closes a patient out; a silent or
-            # unanswered call leaves them due for another attempt.
-            p["derived_status"] = (
-                "completed" if latest.get("status") in ("answered", "satisfied") else "attempted"
-            )
         else:
             p["last_call"] = None
-            p["derived_status"] = "pending"
+
+        # Status comes from the dialler's own record, not from re-reading the call
+        # history. Deriving it here was a second, independent opinion, and the two
+        # disagreed: a number the dialler had given up on as unreachable was shown as
+        # still needing a call, so the upload summary and the patient list below it
+        # reported different totals for the same batch.
+        p["derived_status"] = DISPLAY_STATUS.get(
+            p.get("call_status") or "pending", "pending"
+        )
 
 
 def _clean(doc: dict[str, Any]) -> dict[str, Any]:
@@ -438,12 +456,13 @@ async def queue(
     items = [_clean(d) async for d in collection.find(query).sort("uploaded_at", 1).limit(limit * 4)]
     await _attach_call_activity(items)
 
-    wanted = {"pending"} | ({"attempted"} if include_attempted else set())
+    wanted = ({"pending", "calling"} | ({"attempted"} if include_attempted else set()))
     due = [p for p in items if p.get("derived_status") in wanted][:limit]
 
-    counts = {"pending": 0, "attempted": 0, "completed": 0}
+    counts = {"pending": 0, "calling": 0, "attempted": 0, "completed": 0, "unreachable": 0}
     for p in items:
-        counts[p.get("derived_status", "pending")] = counts.get(p.get("derived_status", "pending"), 0) + 1
+        key = p.get("derived_status", "pending")
+        counts[key] = counts.get(key, 0) + 1
 
     # How the queue is distributed across retry attempts, so the dashboard can answer
     # "kitne retry pe hain" without the caller doing the arithmetic themselves.
@@ -493,6 +512,8 @@ async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, A
         {"$group": {
             "_id": "$batch_id",
             "count": {"$sum": 1},
+            # The same definition the patient list uses, so the upload summary and
+            # the table below it cannot report different totals.
             "waiting": {"$sum": {"$cond": [
                 {"$in": [{"$ifNull": ["$call_status", "pending"]},
                          ["pending", "in_progress", "attempted"]]},
