@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
-import { formatWhen } from "../lib/time";
+import { PK_TIME_ZONE, formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Pagination, Select, Skeleton } from "../components/ui";
 
 const COLUMNS = [
@@ -62,8 +62,11 @@ function pkr(value) {
   return `Rs ${n.toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Today as YYYY-MM-DD in Pakistan, so the pickers cannot run past the current day. */
+const pkToday = () => new Date().toLocaleDateString("en-CA", { timeZone: PK_TIME_ZONE });
+
 export default function Calls({ filters }) {
-  const [query, setQuery] = useState({ search: "", status: "", category: "", er: "", days: null });
+  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "" });
   const [debounced, setDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
@@ -76,7 +79,7 @@ export default function Calls({ filters }) {
     return () => clearTimeout(t);
   }, [query.search]);
 
-  useEffect(() => setPage(1), [debounced, query.status, query.category, query.er]);
+  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,7 +91,7 @@ export default function Calls({ filters }) {
     return () => {
       cancelled = true;
     };
-  }, [debounced, query.status, query.category, query.er, query.days, page]);
+  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, page]);
 
   const set = (key) => (value) => setQuery((q) => ({ ...q, [key]: value }));
 
@@ -116,8 +119,27 @@ export default function Calls({ filters }) {
           </div>
 
           <Select label="Status" value={query.status} onChange={set("status")} options={filters?.statuses || []} />
+          <Select label="Input" value={query.caller_input} onChange={set("caller_input")} options={filters?.inputs || []} />
           <Select label="Category" value={query.category} onChange={set("category")} options={filters?.categories || []} />
           <Select label="ER" value={query.er} onChange={set("er")} options={filters?.ers || []} />
+
+          <Field label="From">
+            <Input
+              type="date"
+              value={query.date_from}
+              max={query.date_to || pkToday()}
+              onChange={(e) => set("date_from")(e.target.value)}
+            />
+          </Field>
+          <Field label="To">
+            <Input
+              type="date"
+              value={query.date_to}
+              min={query.date_from}
+              max={pkToday()}
+              onChange={(e) => set("date_to")(e.target.value)}
+            />
+          </Field>
 
           <Button variant="primary" onClick={download} disabled={downloading}>
             {downloading ? "Preparing…" : "↓ Export Excel"}
