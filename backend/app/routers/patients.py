@@ -438,6 +438,19 @@ async def list_patients(
     }
 
 
+async def _max_attempts() -> int:
+    """The dialler's retry budget, as the dashboard's own settings page writes it.
+
+    Who is still callable depends on it, so reading it here keeps this endpoint and
+    dialer.py in agreement rather than hard-coding a number that drifts.
+    """
+    doc = await get_db()["settings"].find_one({"_id": "dialer"}) or {}
+    try:
+        return max(1, int(doc.get("max_attempts") or 3))
+    except (TypeError, ValueError):
+        return 3
+
+
 @router.get("/queue")
 async def queue(
     er: str | None = None,
@@ -451,41 +464,74 @@ async def queue(
         query["er_name"] = er
 
     collection = patients()
-    # Pull a generous slice, then filter on derived status — call history is what
-    # decides who is still due, and that lives in another collection.
-    items = [_clean(d) async for d in collection.find(query).sort("uploaded_at", 1).limit(limit * 4)]
+    now = utcnow()
+    max_attempts = await _max_attempts()
+
+    # Every figure below is counted across the WHOLE collection, not over the page of
+    # rows fetched for the table. They used to be derived from a `limit * 4` slice taken
+    # oldest-upload-first, which meant the tiles described the earliest 400 patients and
+    # nothing else: with three files loaded they reported 37 completed out of 1,590, and
+    # a retry breakdown that summed to exactly 400.
+    #
+    # Counting from call_status is equivalent to the per-row derived_status the table
+    # shows, because derived_status is a straight lookup of it — see
+    # _attach_call_activity. Deliberately not re-derived from call history; that was
+    # tried and gave two disagreeing opinions.
+    counts: dict[str, int] = {"pending": 0, "calling": 0, "attempted": 0,
+                              "completed": 0, "unreachable": 0}
+    for status, display in DISPLAY_STATUS.items():
+        counts[display] += await collection.count_documents({**query, "call_status": status})
+    # Rows uploaded before the dialler wrote a status at all.
+    counts["pending"] += await collection.count_documents(
+        {**query, "call_status": {"$in": [None, ""]}}
+    )
+
+    by_attempt: dict[str, int] = {}
+    async for row in collection.aggregate(
+        [{"$match": query}, {"$group": {"_id": "$attempts", "n": {"$sum": 1}}}]
+    ):
+        by_attempt[str(int(row["_id"] or 0))] = row["n"]
+
+    # Who the dialler would actually pick up, which is narrower than "not completed".
+    # A patient out of attempts can never be called again however old their next_retry_at
+    # is, and listing them as work to do had the dashboard offering 100 patients to call
+    # on a queue that was finished.
+    retryable = {
+        "call_status": "attempted",
+        "attempts": {"$lt": max_attempts},
+    }
+    due_query: dict[str, Any] = {
+        **query,
+        "$or": [
+            {"call_status": {"$in": [None, "", "pending"]}},
+            {"call_status": "in_progress"},
+            *([{**retryable, "next_retry_at": {"$lte": now}}] if include_attempted else []),
+        ],
+    }
+    total_due = await collection.count_documents(due_query)
+    retries_waiting = await collection.count_documents(
+        {**query, **retryable, "next_retry_at": {"$gt": now}}
+    )
+    # Out of attempts but still filed as "attempted", because the dialler only writes
+    # "exhausted" at the moment it records a final failure — lowering max_attempts
+    # afterwards leaves these behind. Surfaced so the dashboard can stop counting them
+    # as outstanding work.
+    stalled = await collection.count_documents(
+        {**query, "call_status": "attempted", "attempts": {"$gte": max_attempts}}
+    )
+
+    items = [_clean(d) async for d in collection.find(due_query).sort("uploaded_at", 1).limit(limit)]
     await _attach_call_activity(items)
 
-    wanted = ({"pending", "calling"} | ({"attempted"} if include_attempted else set()))
-    due = [p for p in items if p.get("derived_status") in wanted][:limit]
-
-    counts = {"pending": 0, "calling": 0, "attempted": 0, "completed": 0, "unreachable": 0}
-    for p in items:
-        key = p.get("derived_status", "pending")
-        counts[key] = counts.get(key, 0) + 1
-
-    # How the queue is distributed across retry attempts, so the dashboard can answer
-    # "kitne retry pe hain" without the caller doing the arithmetic themselves.
-    by_attempt: dict[str, int] = {}
-    retries_waiting = 0
-    # Aware, because _clean() has already turned next_retry_at into an ISO string
-    # carrying a UTC offset. Comparing that against a naive now() raises.
-    now = utcnow()
-    for p in items:
-        attempts = int(p.get("attempts") or 0)
-        by_attempt[str(attempts)] = by_attempt.get(str(attempts), 0) + 1
-        if p.get("call_status") == "attempted":
-            when = as_utc(p.get("next_retry_at"))
-            if when and when > now:
-                retries_waiting += 1
-
     return {
-        "items": due,
+        "items": items,
         "counts": counts,
         "by_attempt": by_attempt,
         "retries_waiting": retries_waiting,
-        "total_due": len(due),
-        "scanned": len(items),
+        "stalled": stalled,
+        "max_attempts": max_attempts,
+        "total_due": total_due,
+        "scanned": await collection.count_documents(query),
     }
 
 

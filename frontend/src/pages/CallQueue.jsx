@@ -341,6 +341,10 @@ export default function CallQueue({ filters }) {
   }, [tab, debounced, er, reload, patientPage]);
 
   const counts = queue?.counts;
+  // "attempted" covers both patients still owed a retry and those that have used the
+  // whole budget. Only the first group is work; the dialler will never pick up the second.
+  const stalled = queue?.stalled ?? 0;
+  const needsRetry = Math.max(0, (counts?.attempted ?? 0) - stalled);
   const loading = tab === "queue" ? queue === null : all === null;
 
   // The queue arrives in one response, so it pages in the browser. "All patients" is
@@ -363,19 +367,23 @@ export default function CallQueue({ filters }) {
         <>
           <StatStrip>
             <Stat label="Awaiting first call" value={counts.pending} hint="Uploaded, never contacted" />
-            <Stat label="Needs retry" value={counts.attempted} hint="Called, but never connected" />
-            <Stat label="Completed" value={counts.completed} accent="var(--good)" hint="Feedback captured" />
-            <Stat
-              label="Unreachable"
-              value={counts.unreachable ?? 0}
-              hint="Tried and given up on"
-            />
+            <Stat label="Needs retry" value={needsRetry} hint="Called, and a retry is still owed" />
+            <Stat label="Retry scheduled" value={queue?.retries_waiting ?? 0} hint="Waiting out the retry gap" />
             <Stat label="Due now" value={queue?.total_due ?? 0} hint="Ready to dial this moment" />
-            <Stat
-              label="Retry scheduled"
-              value={queue?.retries_waiting ?? 0}
-              hint="Waiting out the retry gap"
-            />
+            <Stat label="Calling now" value={counts.calling ?? 0} hint="On the line this moment" />
+            <Stat label="Completed" value={counts.completed} accent="var(--good)" hint="Feedback captured" />
+            <Stat label="Unreachable" value={counts.unreachable ?? 0} hint="Tried and given up on" />
+            {/* Out of attempts but still filed as "attempted" — the dialler writes
+                "exhausted" only as it records a final failure, so lowering max_attempts
+                afterwards strands these. Shown on its own because folding them into
+                "Needs retry" had the page offering work that can never be done. */}
+            {stalled > 0 && (
+              <Stat
+                label="Out of attempts"
+                value={stalled}
+                hint={`Tried ${queue?.max_attempts ?? "max"}×, will not be called again`}
+              />
+            )}
           </StatStrip>
           <AttemptBreakdown byAttempt={queue?.by_attempt} />
         </>
@@ -406,7 +414,7 @@ export default function CallQueue({ filters }) {
         title={tab === "queue" ? `Patients to call${queue ? ` · ${queue.total_due}` : ""}` : `All patients${all ? ` · ${all.total}` : ""}`}
         subtitle={
           tab === "queue"
-            ? "Oldest upload first — these have no completed feedback yet"
+            ? "Oldest upload first — everyone the dialler would pick up next"
             : "Everyone imported, including those already contacted"
         }
       >
