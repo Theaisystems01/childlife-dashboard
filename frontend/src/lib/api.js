@@ -17,6 +17,36 @@ export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export async function fetchBlobUrl(path) {
+  // The audio endpoint is authenticated with the same bearer token as everything else,
+  // and an <audio src> cannot carry a header — so the file is fetched here and handed
+  // to the player as a blob URL. Recordings are a few hundred KB on average, which is
+  // why the whole file is acceptable: it also means seeking works immediately, where a
+  // streamed source would have to wait on range requests.
+  //
+  // The caller owns the returned URL and must revokeObjectURL it, or every call opened
+  // leaks the audio it played.
+  const token = getToken();
+  const res = await fetch(url(path), {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401) {
+    setToken(null);
+    throw new ApiError("Session expired", 401);
+  }
+  if (!res.ok) {
+    let detail = `Could not load the recording (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = body.detail;
+    } catch {
+      /* the endpoint returns audio on success, so a non-JSON error body is expected */
+    }
+    throw new ApiError(detail, res.status);
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
 export function setToken(token) {
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);

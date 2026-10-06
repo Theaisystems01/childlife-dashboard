@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../lib/api";
+import { api, fetchBlobUrl } from "../lib/api";
 import { PK_TIME_ZONE, formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Pagination, Select, Skeleton } from "../components/ui";
 
@@ -19,6 +19,68 @@ const COLUMNS = [
 ];
 
 /** Did we reach the number. Shows the attempt count when it took more than one. */
+
+function Recording({ sessionId, available }) {
+  const [src, setSrc] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  // Re-fetched per call, and the blob URL released when the panel moves on — without
+  // the revoke, every call you listen to stays in memory for the life of the tab.
+  useEffect(() => {
+    if (!available || !sessionId) {
+      setSrc(null);
+      setError(null);
+      return undefined;
+    }
+    let url = null;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchBlobUrl(`/api/calls/${encodeURIComponent(sessionId)}/recording`)
+      .then((blobUrl) => {
+        url = blobUrl;
+        if (cancelled) {
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        setSrc(blobUrl);
+      })
+      .catch((e) => !cancelled && setError(e.message || "Could not load the recording"))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [sessionId, available]);
+
+  // Nothing to offer: a call that never connected, or one from before recording was on.
+  if (!available && !error) return null;
+
+  return (
+    <div className="mt-4">
+      <div
+        className="mb-2 text-[11px] font-medium uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}
+      >
+        Recording
+      </div>
+      {loading && <Skeleton className="h-10" />}
+      {error && (
+        <div className="text-[13px]" style={{ color: "var(--text-muted)" }}>
+          {error}
+        </div>
+      )}
+      {src && (
+        /* The browser's own controls: a custom transport would be a lot of code to
+           reimplement seeking and volume for no gain. Opus in Ogg plays in Chrome,
+           Firefox, Edge and Safari 15+. */
+        <audio controls preload="metadata" src={src} className="w-full" />
+      )}
+    </div>
+  );
+}
+
 function ConnectionBadge({ connection, attempt }) {
   const answered = connection === "Answered";
   return (
@@ -298,6 +360,8 @@ function CallDetail({ sessionId, onClose }) {
                 {call.patient_matched && <Badge tone="good">✓ patient matched</Badge>}
                 {call.support_required && <Badge tone="critical">follow-up needed</Badge>}
               </div>
+
+              <Recording sessionId={call.session_id} available={call.has_recording} />
 
               <dl className="grid grid-cols-[minmax(120px,auto)_1fr] gap-x-4 gap-y-1.5 text-[13px]">
                 {COLUMNS.map((c) => (
