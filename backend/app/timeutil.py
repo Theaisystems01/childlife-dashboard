@@ -11,7 +11,7 @@ Everything stored is UTC, so the fix is to say so explicitly.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 
@@ -48,3 +48,18 @@ def as_utc(value: Any) -> datetime | None:
 def utcnow() -> datetime:
     """Timezone-aware now, for comparing against stored timestamps."""
     return datetime.now(timezone.utc)
+
+
+# Pakistan has not observed daylight saving since 2009, so a fixed offset is exact and
+# avoids depending on the host having tzdata installed.
+PK_TZ = timezone(timedelta(hours=5), "PKT")
+
+
+def pk_day_start(day: date) -> datetime:
+    """Midnight in Pakistan on this calendar day, as UTC.
+
+    A date picked in the dashboard means a Pakistan day. Taking it as a UTC day would
+    move the boundary to 5am locally, so calls between midnight and 5am would land on
+    the wrong side of the filter.
+    """
+    return datetime.combine(day, time.min, PK_TZ).astimezone(timezone.utc)

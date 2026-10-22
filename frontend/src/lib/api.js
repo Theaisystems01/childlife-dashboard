@@ -108,8 +108,8 @@ const json = (path) => request(path).then((r) => r.json());
 
 export const api = {
   me: () => json("/api/auth/me"),
-  overview: (params) => json(`/api/stats/overview?${new URLSearchParams(clean(params))}`),
-  calls: (params) => json(`/api/calls?${new URLSearchParams(clean(params))}`),
+  overview: (params) => json(`/api/stats/overview?${qs(params)}`),
+  calls: (params) => json(`/api/calls?${qs(params)}`),
   call: (id) => json(`/api/calls/${encodeURIComponent(id)}`),
   filters: () => json("/api/calls/filters"),
   patients: (params) => json(`/api/patients?${new URLSearchParams(clean(params))}`),
@@ -136,7 +136,7 @@ export const api = {
 
   downloadTemplate: () => downloadFrom("/api/patients/template", "patient-upload-template.xlsx"),
 
-  exportUrl: (params) => `/api/export/xlsx?${new URLSearchParams(clean(params))}`,
+  exportUrl: (params) => `/api/export/xlsx?${qs(params)}`,
   download: (params) =>
     downloadFrom(api.exportUrl(params), `childlife-feedback-${new Date().toISOString().slice(0, 10)}.xlsx`),
 };
@@ -158,4 +158,23 @@ function clean(params = {}) {
   return Object.fromEntries(
     Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined),
   );
+}
+
+/**
+ * Query string that repeats a key per array item — batches=FILE+1&batches=FILE+2 —
+ * which is what FastAPI needs for a list parameter. Passing the array straight to
+ * URLSearchParams comma-joins it into one value instead, and the filter then matches
+ * a single upload named "FILE 1,FILE 2" that does not exist.
+ */
+function qs(params = {}) {
+  const out = new URLSearchParams();
+  for (const [k, v] of Object.entries(clean(params))) {
+    if (Array.isArray(v)) {
+      if (!v.length) continue;
+      v.forEach((item) => out.append(k, item));
+    } else {
+      out.append(k, v);
+    }
+  }
+  return out.toString();
 }

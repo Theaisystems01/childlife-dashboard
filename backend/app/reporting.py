@@ -89,6 +89,18 @@ def connection_label(doc: dict[str, Any]) -> str:
     return "Answered" if was_connected(doc) else "Not answered"
 
 
+# Invalid-feedback reasons that describe a CALLER on a connected call, as opposed to a
+# dial that never landed. Shared by input_label() and INPUT_LABEL_EXPR: the two are
+# separate implementations of one rule, and letting them drift is how the table came to
+# show "Dissatisfied" for a call the filter found under "Mistakenly Pressed".
+CALLER_SIDE_INVALID = (
+    "Mistakenly Pressed",
+    "Unwilling to Talk",
+    "Wrong Numbers",
+    "Ward Complaints",
+)
+
+
 def input_label(doc: dict[str, Any]) -> str:
     """Column two: what the caller pressed.
 
@@ -103,6 +115,13 @@ def input_label(doc: dict[str, Any]) -> str:
         summary = doc.get("feedback_summary") or {}
         return summary.get("invalid_feedback_category") or "—"
 
+    # Connected, but the agent judged the feedback invalid: show WHY rather than which
+    # key was pressed. Someone who pressed 2 and then said it was a mistake read as
+    # "Dissatisfied", the opposite of what they told us.
+    reason = (doc.get("feedback_summary") or {}).get("invalid_feedback_category") or ""
+    if reason in CALLER_SIDE_INVALID:
+        return reason
+
     selection = str(doc.get("dtmf_selection") or "")
     if selection == "1" or doc.get("satisfied") is True:
         return "Satisfied"
@@ -114,6 +133,79 @@ def input_label(doc: dict[str, Any]) -> str:
     if doc.get("caller_hung_up") or doc.get("status") == "abandoned":
         return "Hung up"
     return "No key pressed"
+
+
+# The same two labels as Mongo expressions, so the table's filters select exactly the
+# rows that display a given label. These must change together with the functions
+# above: a filter that disagrees with the column it filters is worse than no filter.
+CONNECTED_EXPR: dict[str, Any] = {
+    "$cond": [
+        {"$in": [{"$type": "$connected"}, ["missing", "null"]]},
+        {"$ne": ["$status", "not_connected"]},
+        {"$toBool": "$connected"},
+    ]
+}
+
+CONNECTION_LABEL_EXPR: dict[str, Any] = {
+    "$cond": [CONNECTED_EXPR, "Answered", "Not answered"]
+}
+
+INPUT_LABEL_EXPR: dict[str, Any] = {
+    "$switch": {
+        "branches": [
+            {
+                "case": {"$not": [CONNECTED_EXPR]},
+                "then": {
+                    "$cond": [
+                        {"$in": [
+                            {"$ifNull": ["$feedback_summary.invalid_feedback_category", ""]},
+                            ["", None],
+                        ]},
+                        "—",
+                        "$feedback_summary.invalid_feedback_category",
+                    ]
+                },
+            },
+            # A connected call the agent judged invalid: show WHY, not which key was
+            # pressed. Someone who pressed 2 and then said they pressed by mistake was
+            # displaying as "Dissatisfied", which is the opposite of what they told us.
+            #
+            # Only the caller-side reasons. Powered Off / Busy / Unanswered describe a
+            # dial that never connected, and the fallback classifier writes "Unanswered"
+            # on 1,050 calls that were in fact answered — relabelling those would spread
+            # that mistake across the dashboard instead of leaving it in one field.
+            {
+                "case": {"$in": [
+                    {"$ifNull": ["$feedback_summary.invalid_feedback_category", ""]},
+                    list(CALLER_SIDE_INVALID),
+                ]},
+                "then": "$feedback_summary.invalid_feedback_category",
+            },
+            {
+                "case": {"$or": [
+                    {"$eq": [{"$toString": "$dtmf_selection"}, "1"]},
+                    {"$eq": ["$satisfied", True]},
+                ]},
+                "then": "Satisfied",
+            },
+            {
+                "case": {"$or": [
+                    {"$eq": [{"$toString": "$dtmf_selection"}, "2"]},
+                    {"$eq": ["$satisfied", False]},
+                ]},
+                "then": "Dissatisfied",
+            },
+            {
+                "case": {"$or": [
+                    {"$toBool": {"$ifNull": ["$caller_hung_up", False]}},
+                    {"$eq": ["$status", "abandoned"]},
+                ]},
+                "then": "Hung up",
+            },
+        ],
+        "default": "No key pressed",
+    }
+}
 
 
 def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[str, Any]:

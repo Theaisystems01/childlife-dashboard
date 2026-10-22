@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { BarChart, StackedBar } from "../components/charts";
-import { Card, Segmented, Skeleton, Stat, StatStrip } from "../components/ui";
+import { Card, MultiSelect, Segmented, Skeleton, Stat, StatStrip } from "../components/ui";
 
 const RANGES = [
   { label: "7d", value: 7 },
@@ -22,6 +22,7 @@ const BREAKDOWNS = [
 export default function Overview({ filters }) {
   const [days, setDays] = useState(null);
   const [er, setEr] = useState("");
+  const [batches, setBatches] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
 
@@ -30,13 +31,13 @@ export default function Overview({ filters }) {
     setData(null);
     setError("");
     api
-      .overview({ days, er })
+      .overview({ days, er, batches })
       .then((d) => !cancelled && setData(d))
       .catch((e) => !cancelled && setError(e.message));
     return () => {
       cancelled = true;
     };
-  }, [days, er]);
+  }, [days, er, batches]);
 
   if (error) {
     return (
@@ -55,11 +56,20 @@ export default function Overview({ filters }) {
       {/* One filter row, above everything. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Segmented options={RANGES} value={days} onChange={setDays} />
-        <Segmented
-          value={er}
-          onChange={setEr}
-          options={[{ label: "All ERs", value: "" }, ...(filters?.ers || []).map((n) => ({ label: n, value: n }))]}
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <Segmented
+            value={er}
+            onChange={setEr}
+            options={[{ label: "All ERs", value: "" }, ...(filters?.ers || []).map((n) => ({ label: n, value: n }))]}
+          />
+          <MultiSelect
+            label=""
+            value={batches}
+            onChange={setBatches}
+            options={filters?.batches || []}
+            allLabel="All uploads"
+          />
+        </div>
       </div>
 
       {!data ? (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ..db import calls, get_db
 from ..pricing import Tariff
@@ -43,9 +43,10 @@ async def overview(
     days: int | None = None,
     er: str | None = None,
     direction: str | None = None,
+    batches: list[str] | None = Query(None),
     _: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
-    match = build_filter(er=er, direction=direction, days=days)
+    match = build_filter(er=er, direction=direction, days=days, batches=batches)
     collection = calls()
 
     total = await collection.count_documents(match)

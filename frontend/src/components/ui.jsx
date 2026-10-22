@@ -1,4 +1,4 @@
-import { Children, useEffect, useState } from "react";
+import { Children, useEffect, useRef, useState } from "react";
 
 export function Card({ title, subtitle, action, children, className = "", padded = true }) {
   return (
@@ -198,6 +198,99 @@ export function Select({ label, value, onChange, options, allLabel = "All" }) {
           </option>
         ))}
       </select>
+    </Field>
+  );
+}
+
+/**
+ * Several options at once, as a list of checkboxes in a popover. A native <select
+ * multiple> is the obvious choice and the wrong one: it needs ctrl-click to add a second
+ * item, which nobody discovers, and shows no indication of what is selected once closed.
+ */
+export function MultiSelect({ label, value = [], onChange, options, allLabel = "All" }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => box.current && !box.current.contains(e.target) && setOpen(false);
+    const esc = (e) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+
+  const toggle = (v) =>
+    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+
+  // Nothing selected means no filter at all, so it reads as "All" rather than "0 of 3".
+  const summary =
+    value.length === 0
+      ? allLabel
+      : value.length === 1
+        ? value[0]
+        : `${value.length} selected`;
+
+  return (
+    <Field label={label}>
+      <div className="relative" ref={box}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="flex min-w-[170px] max-w-[260px] items-center justify-between gap-2 rounded-[10px] border px-2.5 py-[7px] text-left text-[13px] transition-colors focus:outline-2 focus:outline-offset-1"
+          style={controlStyle}
+        >
+          <span className="truncate">{summary}</span>
+          <span style={{ color: "var(--text-muted)" }}>{open ? "\u25B4" : "\u25BE"}</span>
+        </button>
+
+        {open && (
+          <div
+            className="absolute right-0 z-20 mt-1 max-h-[280px] min-w-[240px] overflow-y-auto rounded-[10px] border py-1 shadow-lg"
+            style={{ background: "var(--surface)", borderColor: "var(--border)" }}
+          >
+            {!options.length && (
+              <div className="px-3 py-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
+                Nothing to filter by yet
+              </div>
+            )}
+            {options.map((o) => {
+              const v = typeof o === "string" ? o : o.file;
+              const count = typeof o === "string" ? null : o.calls;
+              const on = value.includes(v);
+              return (
+                <label
+                  key={v}
+                  className="flex cursor-pointer items-center gap-2.5 px-3 py-[7px] text-[13px]"
+                  style={{ background: on ? "var(--surface-sunken)" : "transparent" }}
+                >
+                  <input type="checkbox" checked={on} onChange={() => toggle(v)} />
+                  <span className="flex-1 truncate">{v}</span>
+                  {count != null && (
+                    <span className="tnum text-[12px]" style={{ color: "var(--text-muted)" }}>
+                      {count.toLocaleString()}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+            {value.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="mt-1 w-full border-t px-3 py-2 text-left text-[12px]"
+                style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
+              >
+                Clear selection
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </Field>
   );
 }
