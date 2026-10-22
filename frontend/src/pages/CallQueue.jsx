@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { formatRelative, formatWhen } from "../lib/time";
 import { Badge, Button, Card, EmptyState, Field, Input, Pagination, Segmented, Select, Skeleton, Stat, StatStrip, paginate } from "../components/ui";
@@ -66,7 +67,129 @@ function AttemptBreakdown({ byAttempt }) {
  */
 const UPLOADS_PER_PAGE = 5;
 
-function UploadHistory({ reload }) {
+
+const SHEET_ROWS_PER_PAGE = 50;
+
+/**
+ * The rows that came out of one uploaded sheet, read-only.
+ *
+ * Not the .xlsx itself: the upload endpoint parses the file and discards it, keeping
+ * only the audit counts, so there is no original to hand back. These are the patients it
+ * produced, which is what the file is being opened to check anyway — did the right
+ * numbers land, with the right ER against them.
+ */
+function SheetViewer({ batch, onClose }) {
+  const [data, setData] = useState(null);
+  const [page, setPage] = useState(1);
+  const [error, setError] = useState("");
+
+  useEffect(() => setPage(1), [batch?.batch_id]);
+
+  useEffect(() => {
+    if (!batch) return undefined;
+    let cancelled = false;
+    setData(null);
+    setError("");
+    api
+      .patients({ batch_id: batch.batch_id, page, limit: SHEET_ROWS_PER_PAGE })
+      .then((d) => !cancelled && setData(d))
+      .catch((e) => !cancelled && setError(e.message || "Could not load the rows"));
+    return () => { cancelled = true; };
+  }, [batch, page]);
+
+  useEffect(() => {
+    const esc = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  if (!batch) return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(11,11,11,0.35)" }}
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[86vh] w-full max-w-[1000px] flex-col rounded-xl border"
+        style={{ background: "var(--surface)", borderColor: "var(--border)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex shrink-0 items-start justify-between gap-4 border-b px-5 py-4"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-medium">{batch.filename || batch.batch_id}</div>
+            <div className="mt-0.5 text-[12px]" style={{ color: "var(--text-muted)" }}>
+              {batch.rows_read ? `${batch.rows_read} rows read` : "—"}
+              {batch.uploaded_by ? ` · ${batch.uploaded_by}` : ""}
+              {batch.uploaded_at ? ` · ${formatWhen(batch.uploaded_at)}` : ""}
+            </div>
+          </div>
+          <Button onClick={onClose}>Close</Button>
+        </div>
+
+        {error && (
+          <div className="px-5 py-4 text-[13px]" style={{ color: "var(--critical)" }}>{error}</div>
+        )}
+        {!data && !error && <div className="p-5"><Skeleton className="h-20" /></div>}
+
+        {data && (
+          <>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full text-[13px]">
+                <thead className="sticky top-0" style={{ background: "var(--surface)" }}>
+                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                    {["#", "Phone", "Patient", "MR Number", "ER", "Patient Catg", "Disposition", "Status"].map((h) => (
+                      <th
+                        key={h}
+                        className="whitespace-nowrap px-3 py-2.5 text-left font-medium"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.items.map((r, i) => (
+                    <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <td className="tnum px-3 py-2 whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
+                        {(page - 1) * SHEET_ROWS_PER_PAGE + i + 1}
+                      </td>
+                      <td className="tnum whitespace-nowrap px-3 py-2">{r.phone_raw || r.phone_e164 || "—"}</td>
+                      <td className="max-w-[180px] truncate px-3 py-2" title={r.patient_name}>{r.patient_name || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2" style={{ color: "var(--text-secondary)" }}>{r.mr_number || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2">{r.er_name || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2" style={{ color: "var(--text-secondary)" }}>{r.patient_category || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2" style={{ color: "var(--text-secondary)" }}>{r.disposition_category || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        <Badge tone={STATUS_TONE[r.derived_status] || "neutral"}>{r.derived_status || "pending"}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!data.items.length && (
+                <div className="px-5 py-6 text-[13px]" style={{ color: "var(--text-muted)" }}>
+                  No rows from this upload are still in the system.
+                </div>
+              )}
+            </div>
+            <div className="shrink-0 border-t px-2" style={{ borderColor: "var(--border)" }}>
+              <Pagination page={data.page} pages={data.pages} total={data.total} onPage={setPage} />
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function UploadHistory({ reload, onOpen }) {
   const [rows, setRows] = useState(null);
   const [page, setPage] = useState(1);
 
@@ -100,8 +223,18 @@ function UploadHistory({ reload }) {
           <tbody>
             {shown.slice.map((b) => (
               <tr key={b.batch_id} style={{ borderBottom: "1px solid var(--border)" }}>
-                <td className="max-w-[240px] truncate px-3 py-2.5" title={b.filename || b.batch_id}>
-                  {b.filename || <span style={{ color: "var(--text-muted)" }}>{b.batch_id}</span>}
+                <td className="max-w-[240px] px-3 py-2.5">
+                  {/* The filename is the handle: it is what the reader recognises, and
+                      clicking the thing you recognise is cheaper than a separate action
+                      column that has to be labelled. */}
+                  <button
+                    type="button"
+                    onClick={() => onOpen(b)}
+                    className="block max-w-full truncate text-left underline decoration-dotted underline-offset-2 hover:decoration-solid focus:outline-2 focus:outline-offset-2"
+                    title={`View the rows from ${b.filename || b.batch_id}`}
+                  >
+                    {b.filename || <span style={{ color: "var(--text-muted)" }}>{b.batch_id}</span>}
+                  </button>
                 </td>
                 <td className="whitespace-nowrap px-3 py-2.5" style={{ color: "var(--text-secondary)" }} title={formatWhen(b.uploaded_at)}>
                   {b.uploaded_at ? formatRelative(b.uploaded_at) : "—"}
@@ -343,6 +476,8 @@ export default function CallQueue({ filters }) {
   const counts = queue?.counts;
   // "attempted" covers both patients still owed a retry and those that have used the
   // whole budget. Only the first group is work; the dialler will never pick up the second.
+  // Which upload is open in the read-only viewer, if any.
+  const [sheet, setSheet] = useState(null);
   const stalled = queue?.stalled ?? 0;
   const needsRetry = Math.max(0, (counts?.attempted ?? 0) - stalled);
   const loading = tab === "queue" ? queue === null : all === null;
@@ -359,7 +494,8 @@ export default function CallQueue({ filters }) {
   return (
     <div className="flex flex-col gap-6">
       <Upload onDone={() => setReload((n) => n + 1)} />
-      <UploadHistory reload={reload} />
+      <UploadHistory reload={reload} onOpen={setSheet} />
+      <SheetViewer batch={sheet} onClose={() => setSheet(null)} />
 
       {!counts ? (
         <Skeleton className="h-[124px]" />
