@@ -18,7 +18,7 @@ const COLUMNS = [
   "Area",
 ];
 
-/** Did we reach the number. Shows the attempt count when it took more than one. */
+/** Did we reach the number, and on which try. */
 
 function Recording({ sessionId, available }) {
   const [src, setSrc] = useState(null);
@@ -86,11 +86,22 @@ function ConnectionBadge({ connection, attempt }) {
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
       <Badge tone={answered ? "good" : "critical"}>{connection || "—"}</Badge>
-      {attempt > 1 && (
-        <span className="tnum text-[11px]" style={{ color: "var(--text-muted)" }} title={`Connected on attempt ${attempt}`}>
-          ·{attempt}
-        </span>
-      )}
+      {/* On every row, not only the retries: the table lists one row per attempt, so
+          without a marker on the first call "no marker" is a convention the reader has
+          to work out. The tooltip has to follow the outcome — 1,345 of these rows are a
+          second attempt that still did not connect, and they used to read "Connected on
+          attempt 2". */}
+      <span
+        className="tnum text-[11px]"
+        style={{ color: "var(--text-muted)" }}
+        title={
+          answered
+            ? `Reached on attempt ${attempt}`
+            : `Attempt ${attempt} — still not reached`
+        }
+      >
+        try {attempt}
+      </span>
     </span>
   );
 }

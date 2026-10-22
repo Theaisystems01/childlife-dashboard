@@ -47,7 +47,10 @@ def _to_pkt_excel(value: Any) -> Any:
 
 # Status and input lead, as they do in the dashboard table, followed by the
 # foundation's report columns in their exact order.
-EXPORT_COLUMNS = ["Status", "Input", *REPORT_COLUMNS]
+# Attempt sits with Status and Input because it qualifies them: the sheet carries one
+# row per dial, so the same patient appears twice when a first call went unanswered, and
+# without this there is no way to tell the retry from the original.
+EXPORT_COLUMNS = ["Status", "Input", "Attempt", *REPORT_COLUMNS]
 
 XLSX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -99,6 +102,7 @@ async def export_xlsx(
         row = {
             "Status": connection_label(doc),
             "Input": input_label(doc),
+            "Attempt": int(doc.get("attempt") or 1),
             **to_report_row(doc),
         }
         values = [row.get(column, "") for column in EXPORT_COLUMNS]
