@@ -64,8 +64,9 @@ def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
         "Patient Name": _first(output, "Patient Name") or _first(patient, "patient_name"),
         "Remarks": _first(output, "Remarks", "Complaint Details Shared by Attendant")
         or _first(summary, "description_of_complaint"),
-        "Complaint Category": _first(output, "Complaint Category")
-        or _first(summary, "complaint_category"),
+        # The complaint's category, or why there is no complaint. Blank on two thirds of
+        # rows otherwise, with the reason stranded in a column about keypresses.
+        "Complaint Category": outcome_label(doc),
         "Complaint Sub Category": _first(output, "Complaint Sub Category")
         or _first(summary, "complaint_subcategory"),
         "Area": _first(output, "Area") or _first(summary, "complaint_area"),
@@ -93,46 +94,63 @@ def connection_label(doc: dict[str, Any]) -> str:
 # dial that never landed. Shared by input_label() and INPUT_LABEL_EXPR: the two are
 # separate implementations of one rule, and letting them drift is how the table came to
 # show "Dissatisfied" for a call the filter found under "Mistakenly Pressed".
-CALLER_SIDE_INVALID = (
+# Why a call produced no complaint. Caller-side reasons first, then the three that
+# describe a dial that never landed.
+NO_COMPLAINT_REASONS = (
     "Mistakenly Pressed",
     "Unwilling to Talk",
     "Wrong Numbers",
     "Ward Complaints",
+    "Powered Off",
+    "Busy",
+    "Unanswered",
 )
 
 
 def input_label(doc: dict[str, Any]) -> str:
-    """Column two: what the caller pressed.
+    """Column two: which key they pressed. Nothing else.
 
-    Kept separate from the connection state on purpose — they answer different
-    questions, and collapsing them into one column made "silent" and "not answered"
-    look like the same outcome when they are operationally very different: one is a
-    number that needs redialling, the other is a person who chose not to engage.
+    Everything that is not a keypress — why they would not talk, why the dial failed,
+    whether they rang off — now reads in the complaint column, so this one answers a
+    single question. It used to carry all of that, which is how a family that pressed 2
+    and then said it was a mistake came to display as "Dissatisfied".
     """
     if not was_connected(doc):
-        # The dial never landed; the reason lives in the invalid-feedback category
-        # (Busy / Unanswered / Powered Off / Wrong Numbers).
-        summary = doc.get("feedback_summary") or {}
-        return summary.get("invalid_feedback_category") or "—"
-
-    # Connected, but the agent judged the feedback invalid: show WHY rather than which
-    # key was pressed. Someone who pressed 2 and then said it was a mistake read as
-    # "Dissatisfied", the opposite of what they told us.
-    reason = (doc.get("feedback_summary") or {}).get("invalid_feedback_category") or ""
-    if reason in CALLER_SIDE_INVALID:
-        return reason
-
+        # They never got the chance to press anything.
+        return "—"
     selection = str(doc.get("dtmf_selection") or "")
     if selection == "1" or doc.get("satisfied") is True:
         return "Satisfied"
     if selection == "2" or doc.get("satisfied") is False:
         return "Dissatisfied"
-    # Answering and ringing off is not the same as sitting through the menu and
-    # pressing nothing. The first points at the opening, the second at the
-    # instructions, and folding them together hides which one needs attention.
-    if doc.get("caller_hung_up") or doc.get("status") == "abandoned":
-        return "Hung up"
     return "No key pressed"
+
+
+def outcome_label(doc: dict[str, Any]) -> str:
+    """What came of the call: the complaint's category, or why there is no complaint.
+
+    One column rather than a complaint category that is blank on two thirds of the rows
+    and a separate reason hidden elsewhere. Order matters: a call that produced a
+    classified complaint reports that, whatever else happened on the line.
+    """
+    summary = doc.get("feedback_summary") or {}
+    category = (doc.get("feedback_output") or {}).get("Complaint Category") or summary.get(
+        "complaint_category"
+    )
+    if category:
+        return str(category)
+
+    reason = summary.get("invalid_feedback_category") or ""
+    if reason:
+        return str(reason)
+
+    # Ringing off is only the outcome when they pressed nothing. Every one of the 24
+    # rows this would otherwise have caught had pressed 1 — a satisfied caller who heard
+    # the thank-you and the line closed, which "Hung up" misrepresents.
+    pressed = str(doc.get("dtmf_selection") or "")
+    if not pressed and (doc.get("caller_hung_up") or doc.get("status") == "abandoned"):
+        return "Hung up"
+    return "—"
 
 
 # The same two labels as Mongo expressions, so the table's filters select exactly the
@@ -153,34 +171,8 @@ CONNECTION_LABEL_EXPR: dict[str, Any] = {
 INPUT_LABEL_EXPR: dict[str, Any] = {
     "$switch": {
         "branches": [
-            {
-                "case": {"$not": [CONNECTED_EXPR]},
-                "then": {
-                    "$cond": [
-                        {"$in": [
-                            {"$ifNull": ["$feedback_summary.invalid_feedback_category", ""]},
-                            ["", None],
-                        ]},
-                        "—",
-                        "$feedback_summary.invalid_feedback_category",
-                    ]
-                },
-            },
-            # A connected call the agent judged invalid: show WHY, not which key was
-            # pressed. Someone who pressed 2 and then said they pressed by mistake was
-            # displaying as "Dissatisfied", which is the opposite of what they told us.
-            #
-            # Only the caller-side reasons. Powered Off / Busy / Unanswered describe a
-            # dial that never connected, and the fallback classifier writes "Unanswered"
-            # on 1,050 calls that were in fact answered — relabelling those would spread
-            # that mistake across the dashboard instead of leaving it in one field.
-            {
-                "case": {"$in": [
-                    {"$ifNull": ["$feedback_summary.invalid_feedback_category", ""]},
-                    list(CALLER_SIDE_INVALID),
-                ]},
-                "then": "$feedback_summary.invalid_feedback_category",
-            },
+            # Not connected: nothing was pressed, and the reason reads in OUTCOME_EXPR.
+            {"case": {"$not": [CONNECTED_EXPR]}, "then": "—"},
             {
                 "case": {"$or": [
                     {"$eq": [{"$toString": "$dtmf_selection"}, "1"]},
@@ -195,15 +187,44 @@ INPUT_LABEL_EXPR: dict[str, Any] = {
                 ]},
                 "then": "Dissatisfied",
             },
-            {
-                "case": {"$or": [
-                    {"$toBool": {"$ifNull": ["$caller_hung_up", False]}},
-                    {"$eq": ["$status", "abandoned"]},
-                ]},
-                "then": "Hung up",
-            },
         ],
         "default": "No key pressed",
+    }
+}
+
+# The complaint's category, or why there is no complaint. Mirrors outcome_label(); the
+# two must change together, because this one decides which rows the filter selects and
+# that one decides what the column says. Letting them drift is how the table came to
+# show "Dissatisfied" for a call the filter found under "Mistakenly Pressed".
+OUTCOME_EXPR: dict[str, Any] = {
+    "$let": {
+        "vars": {
+            "cat": {"$ifNull": [
+                {"$ifNull": ["$feedback_output.Complaint Category", None]},
+                {"$ifNull": ["$feedback_summary.complaint_category", ""]},
+            ]},
+            "reason": {"$ifNull": ["$feedback_summary.invalid_feedback_category", ""]},
+        },
+        "in": {
+            "$switch": {
+                "branches": [
+                    {"case": {"$ne": ["$$cat", ""]}, "then": "$$cat"},
+                    {"case": {"$ne": ["$$reason", ""]}, "then": "$$reason"},
+                    {
+                        "case": {"$and": [
+                            {"$in": [{"$toString": {"$ifNull": ["$dtmf_selection", ""]}},
+                                     ["", "null"]]},
+                            {"$or": [
+                                {"$toBool": {"$ifNull": ["$caller_hung_up", False]}},
+                                {"$eq": ["$status", "abandoned"]},
+                            ]},
+                        ]},
+                        "then": "Hung up",
+                    },
+                ],
+                "default": "—",
+            }
+        },
     }
 }
 

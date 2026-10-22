@@ -12,8 +12,11 @@ from fastapi.responses import FileResponse
 from ..db import calls, get_db
 from ..pricing import Tariff
 from ..reporting import (
+    COMPLAINT_CATEGORIES,
     CONNECTION_LABEL_EXPR,
     INPUT_LABEL_EXPR,
+    NO_COMPLAINT_REASONS,
+    OUTCOME_EXPR,
     extract_transcript,
     to_call_summary,
 )
@@ -65,9 +68,11 @@ def build_filter(
     if direction:
         query["direction"] = direction
     if category:
-        query["$or"] = [
-            {"feedback_output.Complaint Category": category},
-            {"feedback_summary.complaint_category": category},
+        # Matched on the same expression the column renders, so selecting a value in the
+        # dropdown returns exactly the rows that show it — including the reasons a call
+        # produced no complaint, which used to be unfilterable.
+        query["$and"] = query.get("$and", []) + [
+            {"$expr": {"$eq": [OUTCOME_EXPR, category]}}
         ]
     if er:
         query["$and"] = query.get("$and", []) + [
@@ -190,14 +195,30 @@ async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str,
     ):
         batch_options.append({"file": row["_id"], "calls": row["calls"]})
 
+    # Distinct outcomes actually present, so the dropdown never offers a dead option.
+    outcomes: set[str] = set()
+    async for row in collection.aggregate(
+        [
+            {"$match": {"archived": {"$ne": True}}},
+            {"$group": {"_id": OUTCOME_EXPR}},
+        ]
+    ):
+        if row["_id"] and row["_id"] != "—":
+            outcomes.add(row["_id"])
+
     # Caller responses first in the order a call can end, then the dial failures.
     responses = ("Satisfied", "Dissatisfied", "Hung up", "No key pressed")
     return {
         "statuses": ["Answered", "Not answered"],
         "inputs": [x for x in responses if x in inputs]
         + sorted(x for x in inputs if x not in responses),
-        "categories": sorted(
-            x for x in await collection.distinct("feedback_summary.complaint_category") if x
+        # Everything the complaint column can show: the three taxonomy values first,
+        # then the reasons a call produced no complaint, in the order a call can fail.
+        "categories": [x for x in COMPLAINT_CATEGORIES if x in outcomes]
+        + [x for x in NO_COMPLAINT_REASONS if x in outcomes]
+        + sorted(
+            x for x in outcomes
+            if x not in COMPLAINT_CATEGORIES and x not in NO_COMPLAINT_REASONS and x != "—"
         ),
         "ers": sorted(x for x in ers if x),
         "directions": sorted(x for x in await collection.distinct("direction") if x),
