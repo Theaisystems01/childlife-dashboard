@@ -16,3 +16,7 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+
+# Local run logs
+backend/api.log
+backend/*.log
