@@ -241,17 +241,22 @@ RECORDING_ROOTS = [
 
 
 def _recording_tracks(doc: dict[str, Any]) -> list[dict[str, str]]:
-    """Every audio file belonging to one call, the family's side first.
+    """The audio for one call: the mixed recording, or the per-track backup of it.
 
-    Two layouts have to resolve here. Calls up to 2026-10-23 were recorded as a single
-    room composite named exactly after the room, and several thousand of those files
-    exist. Calls after it are recorded per track, which egress names
+    Normally this returns exactly one entry — the single mixed file, named after the
+    room, which is how every call has been recorded and is what the record's path
+    points at.
+
+    The agent also records each track separately as a backup, because the mixed file is
+    rendered by a headless browser inside the egress server that intermittently fails
+    and leaves nothing behind. Those files are named
 
         <room>-patient-TR_AMsBpj3V59oMn4.ogg
 
-    appending a track id nothing can predict — so the new files are found by globbing
-    the room prefix rather than by rebuilding the name. This mirrors
-    recording_track_template() in the agent repo; the two have to change together.
+    with a track id nobody can predict, so they are found by globbing the room prefix.
+    They are deliberately ignored while the mixed file exists: one player is the point.
+    Only when the mix is missing does the backup surface, as the two sides of the call.
+    This mirrors recording_track_template() in the agent repo; the two change together.
 
     Taken from the record rather than from the request: the client names a call, never a
     path, so there is nothing here for a traversal attempt to reach.
@@ -260,35 +265,27 @@ def _recording_tracks(doc: dict[str, Any]) -> list[dict[str, str]]:
     if not raw or not raw.endswith(".ogg"):
         return []
 
-    found: list[Path] = []
-    composite = Path(raw)
-    if composite.is_file():
-        found.append(composite)
-    # The per-track files that replaced the composite. sorted() only to keep the
-    # listing stable between requests; the ordering that matters is applied below.
-    found.extend(sorted(Path(p) for p in glob(f"{raw[: -len('.ogg')]}-*.ogg")))
-
-    tracks: list[dict[str, str]] = []
-    for path in found:
+    def permitted(path: Path) -> bool:
         resolved = path.resolve()
-        if RECORDING_ROOTS and not any(
+        return not RECORDING_ROOTS or any(
             resolved == root or root in resolved.parents for root in RECORDING_ROOTS
-        ):
-            continue
-        name = path.name
-        if path == composite:
-            label, rank = "Full call", 0
-        elif "-patient-" in name:
-            label, rank = "Family", 1
-        else:
-            label, rank = "Assistant", 2
-        tracks.append({"track": name, "label": label, "_rank": str(rank)})
+        )
 
-    # The family's side leads: it is the half that carries the complaint, and the half
-    # worth checking a suspect transcript against.
-    tracks.sort(key=lambda t: t["_rank"])
-    for t in tracks:
-        t.pop("_rank")
+    mixed = Path(raw)
+    if mixed.is_file() and permitted(mixed):
+        return [{"track": mixed.name, "label": "Full call"}]
+
+    # The mix is gone, so fall back to whichever sides the backup caught. The family's
+    # leads: it is the half that carries the complaint, and the half worth checking a
+    # suspect Urdu transcript against.
+    tracks = []
+    for path in sorted(Path(p) for p in glob(f"{raw[: -len('.ogg')]}-*.ogg")):
+        if not permitted(path):
+            continue
+        family = "-patient-" in path.name
+        tracks.append({"track": path.name, "label": "Family" if family else "Assistant",
+                       "_rank": "1" if family else "2"})
+    tracks.sort(key=lambda t: t.pop("_rank"))
     return tracks
 
 
