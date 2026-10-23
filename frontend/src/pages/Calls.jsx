@@ -20,7 +20,7 @@ const COLUMNS = [
 
 /** Did we reach the number, and on which try. */
 
-function Recording({ sessionId, available }) {
+function TrackPlayer({ sessionId, track, label }) {
   const [src, setSrc] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ function Recording({ sessionId, available }) {
   // Re-fetched per call, and the blob URL released when the panel moves on — without
   // the revoke, every call you listen to stays in memory for the life of the tab.
   useEffect(() => {
-    if (!available || !sessionId) {
+    if (!sessionId) {
       setSrc(null);
       setError(null);
       return undefined;
@@ -37,7 +37,8 @@ function Recording({ sessionId, available }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchBlobUrl(`/api/calls/${encodeURIComponent(sessionId)}/recording`)
+    const q = track ? `?track=${encodeURIComponent(track)}` : "";
+    fetchBlobUrl(`/api/calls/${encodeURIComponent(sessionId)}/recording${q}`)
       .then((blobUrl) => {
         url = blobUrl;
         if (cancelled) {
@@ -52,19 +53,15 @@ function Recording({ sessionId, available }) {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [sessionId, available]);
-
-  // Nothing to offer: a call that never connected, or one from before recording was on.
-  if (!available && !error) return null;
+  }, [sessionId, track]);
 
   return (
-    <div className="mt-4">
-      <div
-        className="mb-2 text-[11px] font-medium uppercase tracking-wider"
-        style={{ color: "var(--text-muted)" }}
-      >
-        Recording
-      </div>
+    <div>
+      {label && (
+        <div className="mb-1 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          {label}
+        </div>
+      )}
       {loading && <Skeleton className="h-10" />}
       {error && (
         <div className="text-[13px]" style={{ color: "var(--text-muted)" }}>
@@ -77,6 +74,43 @@ function Recording({ sessionId, available }) {
            Firefox, Edge and Safari 15+. */
         <audio controls preload="metadata" src={src} className="w-full" />
       )}
+    </div>
+  );
+}
+
+function Recording({ sessionId, available, tracks }) {
+  // One player per published track. From 2026-10-23 a call is recorded per participant
+  // rather than as a single mix — the family's side and the assistant's — because the
+  // room composite that produced one file was rendered in a headless browser that
+  // failed on about one call in ten. Earlier calls still resolve as the single
+  // "Full call" they were recorded as.
+  //
+  // `tracks` missing with `available` true means an older API: fall back to one
+  // unlabelled player, which is exactly what that backend serves.
+  const list =
+    tracks && tracks.length ? tracks : available ? [{ track: "", label: "" }] : [];
+
+  // Nothing to offer: a call that never connected, or one from before recording was on.
+  if (!list.length) return null;
+
+  return (
+    <div className="mt-4">
+      <div
+        className="mb-2 text-[11px] font-medium uppercase tracking-wider"
+        style={{ color: "var(--text-muted)" }}
+      >
+        {list.length > 1 ? "Recording — both sides" : "Recording"}
+      </div>
+      <div className="flex flex-col gap-3">
+        {list.map((t) => (
+          <TrackPlayer
+            key={t.track || "only"}
+            sessionId={sessionId}
+            track={t.track}
+            label={list.length > 1 ? t.label : ""}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -379,7 +413,11 @@ function CallDetail({ sessionId, onClose }) {
                 {call.support_required && <Badge tone="critical">follow-up needed</Badge>}
               </div>
 
-              <Recording sessionId={call.session_id} available={call.has_recording} />
+              <Recording
+                sessionId={call.session_id}
+                available={call.has_recording}
+                tracks={call.recordings}
+              />
 
               <dl className="grid grid-cols-[minmax(120px,auto)_1fr] gap-x-4 gap-y-1.5 text-[13px]">
                 {COLUMNS.map((c) => (

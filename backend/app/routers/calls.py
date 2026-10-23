@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import date, timedelta
+from glob import glob
 from pathlib import Path
 from typing import Any
 
@@ -239,40 +240,69 @@ RECORDING_ROOTS = [
 ]
 
 
-def _recording_path(doc: dict[str, Any]) -> Path:
-    """The audio file for a call, or a 404 explaining which way it is missing.
+def _recording_tracks(doc: dict[str, Any]) -> list[dict[str, str]]:
+    """Every audio file belonging to one call, the family's side first.
+
+    Two layouts have to resolve here. Calls up to 2026-10-23 were recorded as a single
+    room composite named exactly after the room, and several thousand of those files
+    exist. Calls after it are recorded per track, which egress names
+
+        <room>-patient-TR_AMsBpj3V59oMn4.ogg
+
+    appending a track id nothing can predict — so the new files are found by globbing
+    the room prefix rather than by rebuilding the name. This mirrors
+    recording_track_template() in the agent repo; the two have to change together.
 
     Taken from the record rather than from the request: the client names a call, never a
     path, so there is nothing here for a traversal attempt to reach.
     """
     raw = (doc.get("recording_file") or "").strip()
-    if not raw:
-        # Calls from before recording was switched on, and every call that never
-        # connected — the dialler only asks for an egress once a room exists.
-        raise HTTPException(status_code=404, detail="This call has no recording")
+    if not raw or not raw.endswith(".ogg"):
+        return []
 
-    path = Path(raw).resolve()
-    if RECORDING_ROOTS and not any(
-        path == root or root in path.parents for root in RECORDING_ROOTS
-    ):
-        raise HTTPException(status_code=403, detail="Recording is outside the permitted directories")
+    found: list[Path] = []
+    composite = Path(raw)
+    if composite.is_file():
+        found.append(composite)
+    # The per-track files that replaced the composite. sorted() only to keep the
+    # listing stable between requests; the ordering that matters is applied below.
+    found.extend(sorted(Path(p) for p in glob(f"{raw[: -len('.ogg')]}-*.ogg")))
 
-    if not path.is_file():
-        # Recordings have been disappearing from the shared egress mount: something
-        # sweeps it, and roughly a fifth of the paths on file no longer resolve. Say so
-        # plainly instead of serving an empty body the player cannot explain.
-        raise HTTPException(status_code=404, detail="Recording file is no longer on disk")
-    return path
+    tracks: list[dict[str, str]] = []
+    for path in found:
+        resolved = path.resolve()
+        if RECORDING_ROOTS and not any(
+            resolved == root or root in resolved.parents for root in RECORDING_ROOTS
+        ):
+            continue
+        name = path.name
+        if path == composite:
+            label, rank = "Full call", 0
+        elif "-patient-" in name:
+            label, rank = "Family", 1
+        else:
+            label, rank = "Assistant", 2
+        tracks.append({"track": name, "label": label, "_rank": str(rank)})
+
+    # The family's side leads: it is the half that carries the complaint, and the half
+    # worth checking a suspect transcript against.
+    tracks.sort(key=lambda t: t["_rank"])
+    for t in tracks:
+        t.pop("_rank")
+    return tracks
 
 
 @router.get("/{session_id}/recording")
 async def get_recording(
-    session_id: str, _: dict[str, Any] = Depends(current_user)
+    session_id: str,
+    track: str | None = None,
+    _: dict[str, Any] = Depends(current_user),
 ) -> FileResponse:
-    """Stream a call's audio.
+    """Stream one side of a call's audio.
 
     FileResponse honours Range requests, so a player can seek without downloading the
-    whole file first.
+    whole file first. `track` names a file this endpoint itself listed; it is matched by
+    equality against that listing, never joined onto a directory.
     """
     doc = await calls().find_one(
         {"session_id": session_id, "archived": {"$ne": True}}, {"recording_file": 1}
@@ -280,13 +310,28 @@ async def get_recording(
     if not doc:
         raise HTTPException(status_code=404, detail="Call not found")
 
-    path = _recording_path(doc)
+    tracks = _recording_tracks(doc)
+    if not tracks:
+        if (doc.get("recording_file") or "").strip():
+            # The egress was asked for, and the audio is not there. Through 2026-10-23
+            # that was a headless-Chrome failure inside the egress server on about one
+            # call in ten; say so plainly instead of serving a body the player cannot
+            # explain.
+            raise HTTPException(status_code=404, detail="Recording file is no longer on disk")
+        raise HTTPException(status_code=404, detail="This call has no recording")
+
+    wanted = track or tracks[0]["track"]
+    names = {t["track"] for t in tracks}
+    if wanted not in names:
+        raise HTTPException(status_code=404, detail="No such track for this call")
+
+    base = Path((doc["recording_file"]).strip()).parent
     return FileResponse(
-        path,
+        base / wanted,
         media_type="audio/ogg",
         # Named after the room, which is also the session id, so a downloaded file can
         # still be matched back to its call.
-        filename=path.name,
+        filename=wanted,
         content_disposition_type="inline",
     )
 
@@ -304,8 +349,8 @@ async def get_call(
     detail["metrics"] = doc.get("metrics") or {}
     detail["cost_breakdown"] = doc.get("cost") or {}
     detail["patient_context"] = doc.get("patient_context") or {}
-    # Whether to offer a player at all. Checked on disk rather than trusting the path,
-    # because a stored path is not a promise the file survived.
-    raw = (doc.get("recording_file") or "").strip()
-    detail["has_recording"] = bool(raw) and Path(raw).is_file()
+    # Which players to offer. Resolved on disk rather than trusting the path, because a
+    # stored path is not a promise the file survived — and a call now has two sides.
+    detail["recordings"] = _recording_tracks(doc)
+    detail["has_recording"] = bool(detail["recordings"])
     return detail
