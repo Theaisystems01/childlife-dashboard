@@ -313,6 +313,85 @@ async def upload(
     }
 
 
+# The phone fields a conversation-log may carry its number in, oldest schema last.
+# Shared so _reached_since() and _attach_call_activity() read the same places.
+CALL_PHONE_FIELDS = [
+    "patient_context.contact_number",
+    "caller_number",
+    "feedback_output.Phone Number",
+]
+
+
+async def _reached_since() -> dict[str, Any]:
+    """phone_key -> the most recent moment a call to it actually connected.
+
+    The dialler's call_status is not the last word on whether a family was reached.
+    Until 2026-10-26 it allowed the agent 300 seconds to write its record, counted from
+    when the call was placed — but the record is written when the call ENDS, so every
+    conversation longer than five minutes was filed `no_record` and the row marked
+    failed, which this dashboard showed as "unreachable". Eight rows carried a saved
+    conversation of 296 to 760 seconds while reading as never reached, and the bias ran
+    the wrong way: the calls that run long are the dissatisfied parents giving detail.
+
+    So a connected call on file outranks the dialler's verdict. This is not a second
+    opinion of the kind that was removed before — it never invents a call, and it only
+    ever moves a row from unreachable to completed on the strength of a record that
+    exists.
+    """
+    reached: dict[str, Any] = {}
+    async for doc in calls().find(
+        {"archived": {"$ne": True}, "connected": True},
+        {"patient_context.contact_number": 1, "caller_number": 1,
+         "feedback_output.Phone Number": 1, "timestamp": 1},
+    ):
+        pc = doc.get("patient_context") or {}
+        fo = doc.get("feedback_output") or {}
+        num = pc.get("contact_number") or doc.get("caller_number") or fo.get("Phone Number") or ""
+        key = phones.normalize(num)
+        ts = doc.get("timestamp")
+        if not key or ts is None:
+            continue
+        if key not in reached or ts > reached[key]:
+            reached[key] = ts
+    return reached
+
+
+def _reached_at(history: list[dict[str, Any]]) -> Any:
+    """The most recent moment a call in this history connected, or None."""
+    best = None
+    for call in history:
+        if not call.get("connected"):
+            continue
+        ts = call.get("timestamp")
+        if ts is not None and (best is None or ts > best):
+            best = ts
+    return best
+
+
+def _was_reached(patient: dict[str, Any], reached_at: Any) -> bool:
+    """Did a call to this row connect at any point AFTER the row was uploaded?
+
+    The one place this rule lives. The table feeds it a timestamp taken from the call
+    history it already loaded for the page; the tiles feed it one from _reached_since().
+    Both must come through here, because a row and the tile counting it disagreeing is
+    the exact failure that retired the previous attempt at deriving status.
+
+    Dated from the upload, not from the row's attempt counter: the same timeout that
+    mislabelled the call also advanced that counter past it, so the successful call
+    often sits against an earlier attempt number than the row now shows. Dating it from
+    the upload also keeps an OLD call to a number that was uploaded again from marking
+    the new row as already done.
+    """
+    # Through as_utc because the two sides arrive in different shapes: the table has
+    # already run uploaded_at through iso_utc() by this point, while a call timestamp is
+    # still a naive datetime out of pymongo. Comparing those raises.
+    when = as_utc(reached_at)
+    if when is None:
+        return False
+    uploaded = as_utc(patient.get("uploaded_at"))
+    return uploaded is None or when >= uploaded
+
+
 async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
     """Fill in each patient's call history from conversation-logs.
 
@@ -327,11 +406,7 @@ async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
     if not all_variants:
         return
 
-    fields = [
-        "patient_context.contact_number",
-        "caller_number",
-        "feedback_output.Phone Number",
-    ]
+    fields = CALL_PHONE_FIELDS
     # Archived calls must be excluded here as well. This was the one query in the
     # backend that read conversation-logs without the filter, so a patient's "latest
     # call" could be an archived record — and since pre-2026-08-24 records stored
@@ -369,14 +444,16 @@ async def _attach_call_activity(items: list[dict[str, Any]]) -> None:
         else:
             p["last_call"] = None
 
-        # Status comes from the dialler's own record, not from re-reading the call
-        # history. Deriving it here was a second, independent opinion, and the two
-        # disagreed: a number the dialler had given up on as unreachable was shown as
-        # still needing a call, so the upload summary and the patient list below it
-        # reported different totals for the same batch.
-        p["derived_status"] = DISPLAY_STATUS.get(
-            p.get("call_status") or "pending", "pending"
-        )
+        # Status comes from the dialler's own record, except where a connected call on
+        # file contradicts it — see _reached_since(). Anything beyond that correction is
+        # left to the dialler: deriving the whole status here was a second, independent
+        # opinion, and the two disagreed, so the upload summary and the patient list
+        # below it reported different totals for the same batch. The correction is
+        # applied to the tiles in queue() through the SAME helpers, so they still agree.
+        status = DISPLAY_STATUS.get(p.get("call_status") or "pending", "pending")
+        if status == "unreachable" and _was_reached(p, _reached_at(history)):
+            status = "completed"
+        p["derived_status"] = status
 
 
 def _clean(doc: dict[str, Any]) -> dict[str, Any]:
@@ -473,10 +550,9 @@ async def queue(
     # nothing else: with three files loaded they reported 37 completed out of 1,590, and
     # a retry breakdown that summed to exactly 400.
     #
-    # Counting from call_status is equivalent to the per-row derived_status the table
-    # shows, because derived_status is a straight lookup of it — see
-    # _attach_call_activity. Deliberately not re-derived from call history; that was
-    # tried and gave two disagreeing opinions.
+    # Counted from call_status, then corrected by the same rule the table applies to
+    # each row, so the tiles and the rows cannot disagree — which is the failure that
+    # retired the previous attempt at deriving status here.
     counts: dict[str, int] = {"pending": 0, "calling": 0, "attempted": 0,
                               "completed": 0, "unreachable": 0}
     for status, display in DISPLAY_STATUS.items():
@@ -485,6 +561,21 @@ async def queue(
     counts["pending"] += await collection.count_documents(
         {**query, "call_status": {"$in": [None, ""]}}
     )
+
+    # Move every row the dialler gave up on that nevertheless has a connected call.
+    # Only these rows are examined, so the scan is bounded by the unreachable count
+    # rather than the whole collection.
+    reached = await _reached_since()
+    rescued = 0
+    async for row in collection.find(
+        {**query, "call_status": {"$in": [s for s, d in DISPLAY_STATUS.items()
+                                          if d == "unreachable"]}},
+        {"phone_key": 1, "uploaded_at": 1},
+    ):
+        if _was_reached(row, reached.get(row.get("phone_key") or "")):
+            rescued += 1
+    counts["unreachable"] -= rescued
+    counts["completed"] += rescued
 
     by_attempt: dict[str, int] = {}
     async for row in collection.aggregate(
