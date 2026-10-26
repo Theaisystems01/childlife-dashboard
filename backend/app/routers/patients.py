@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import re
 from datetime import datetime
+from itertools import chain, islice
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -38,6 +39,76 @@ COLUMN_ALIASES: dict[str, list[str]] = {
 }
 
 REQUIRED = ["phone_number"]
+
+# What each column's VALUES look like, independent of what its heading claims.
+#
+# _map_columns trusts the heading, which is the right default — a sheet exported from
+# another system can name its columns anything. But it means a sheet whose header row
+# has drifted one place from its data imports confidently and wrongly, every heading
+# sitting over its neighbour's values.
+#
+# That happened on 2026-10-26 with a 6,161-row list, and nothing caught it. ER name
+# held P2/P3/P1, patient category held children's first names, MR number held QTA and
+# MAYO, and patient name held the MR numbers — so the agent spent the morning calling
+# families and addressing their child as "aapke bache one-five-two-six-zero...". The
+# phone column happened to land correctly, which is why the calls connected and the
+# fault stayed invisible until someone read the report.
+#
+# So each mapped column is also checked against the shape of its own contents. Only
+# rules that are crisp and stable are listed: a predicate that is merely usually true
+# would reject good files, which is worse than the problem being solved. Disposition
+# category is deliberately absent — its vocabulary grows, and no stable rule fits it.
+PATIENT_CATEGORY_RE = re.compile(r"[Pp][0-9]")
+
+COLUMN_SHAPES: dict[str, tuple[Any, str]] = {
+    # A number the dialler could actually ring.
+    "phone_number": (lambda v: phones.is_plausible(v), "a phone number"),
+    # Triage priority, always P-and-a-digit.
+    "patient_category": (lambda v: bool(PATIENT_CATEGORY_RE.fullmatch(v)), "P1, P2 or P3"),
+    # A hospital unit code — MUX, MAYO, NICH, K5. Never a triage priority.
+    "er_name": (lambda v: not PATIENT_CATEGORY_RE.fullmatch(v), "a unit name like NICH or MAYO"),
+    # Digits, one per patient.
+    "mr_number": (lambda v: v.isdigit(), "a numeric MR number"),
+    # A child's name, which is never a bare number.
+    "patient_name": (lambda v: not v.isdigit(), "a patient name"),
+}
+
+# Below this share of a column matching its shape, the column is reported as wrong.
+# Set low on purpose: at 0.6 a genuinely odd file still imports, while the drift above
+# scored zero on four columns at once.
+SHAPE_MIN_MATCH = 0.6
+# Too few values to judge a column on. A short correction sheet should not be refused
+# because its handful of rows happened to look unusual.
+SHAPE_MIN_SAMPLE = 10
+
+
+def _column_complaints(
+    mapping: dict[int, str], sample: list[tuple]
+) -> list[str]:
+    """Which mapped columns hold values that do not match their own heading."""
+    complaints: list[str] = []
+    for index, field in sorted(mapping.items()):
+        shape = COLUMN_SHAPES.get(field)
+        if shape is None:
+            continue
+        predicate, expected = shape
+        values = [
+            _cell(row[index]) for row in sample
+            if index < len(row) and _cell(row[index])
+        ]
+        if len(values) < SHAPE_MIN_SAMPLE:
+            continue
+        good = sum(1 for v in values if predicate(v))
+        if good / len(values) >= SHAPE_MIN_MATCH:
+            continue
+        found = ", ".join(dict.fromkeys(values[:3]))
+        complaints.append(
+            f"column {index + 1} is read as {field.replace('_', ' ')} and should hold "
+            f"{expected}, but holds: {found}"
+        )
+    return complaints
+
+
 
 
 def _norm_header(value: Any) -> str:
@@ -131,6 +202,7 @@ async def template(_: dict[str, Any] = Depends(current_user)) -> StreamingRespon
 async def upload(
     file: UploadFile = File(...),
     recall_existing: bool = Form(True),
+    ignore_column_check: bool = Form(False),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     """Import patients from an .xlsx sheet.
@@ -150,6 +222,13 @@ async def upload(
 
     There is no way to infer which is meant. Visit date would have distinguished them,
     but the foundation does not supply it, so the caller has to say.
+
+    `ignore_column_check` forces the import past the column-contents check described at
+    COLUMN_SHAPES. It exists so an unusual but correct sheet is never simply refused at
+    an inconvenient hour, and it should be used only after reading what the check
+    complained about — the check is there because a sheet whose columns had drifted was
+    imported without anyone noticing, and 6,161 families were queued to be called by
+    the wrong name.
     """
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(status_code=400, detail="Please upload an .xlsx file")
@@ -179,6 +258,26 @@ async def upload(
             detail=(
                 "The sheet needs a 'Phone Number' column. Found: "
                 + (", ".join(str(h) for h in header if h) or "no headings")
+            ),
+        )
+
+    # Read a sample forward to judge the columns by their contents, then put it back in
+    # front of the iterator so the import still sees every row. read_only workbooks give
+    # a one-pass generator, hence the chain rather than a second iter_rows().
+    sample = list(islice(rows, 200))
+    rows = chain(sample, rows)
+    complaints = _column_complaints(mapping, sample)
+    if complaints and not ignore_column_check:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The columns in this sheet do not match their headings"
+                + (" — the header row looks shifted against the data"
+                   if len(complaints) > 1 else "")
+                + ". "
+                + "; ".join(complaints)
+                + ". Fix the sheet, or re-upload with the column check turned off if "
+                  "it is correct as it stands."
             ),
         )
 

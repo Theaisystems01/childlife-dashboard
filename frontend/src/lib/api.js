@@ -126,10 +126,13 @@ export const api = {
     return res.json();
   },
 
-  uploadPatients: async (file, { recallExisting = true } = {}) => {
+  uploadPatients: async (file, { recallExisting = true, ignoreColumnCheck = false } = {}) => {
     const body = new FormData();
     body.append("file", file);
     body.append("recall_existing", recallExisting ? "true" : "false");
+    // Only ever set after the server has explained what it objected to and someone
+    // read it — see COLUMN_SHAPES in the backend for why the check exists.
+    body.append("ignore_column_check", ignoreColumnCheck ? "true" : "false");
     const res = await request("/api/patients/upload", { method: "POST", body });
     return res.json();
   },

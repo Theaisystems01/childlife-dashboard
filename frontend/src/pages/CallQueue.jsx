@@ -278,20 +278,30 @@ function Upload({ onDone }) {
   // to the last one — visit date would have, but the foundation does not supply it —
   // so the person uploading has to tell us.
   const [recallExisting, setRecallExisting] = useState(true);
+  // The sheet the server refused on its column contents, kept so it can be sent again
+  // without being picked a second time. Set only by a rejection, cleared by anything
+  // else, so "Upload anyway" cannot linger and apply to a later file.
+  const [rejected, setRejected] = useState(null);
   const inputRef = useRef(null);
 
   const send = useCallback(
-    async (file) => {
+    async (file, { ignoreColumnCheck = false } = {}) => {
       if (!file) return;
       setBusy(true);
       setError("");
       setResult(null);
       try {
-        const r = await api.uploadPatients(file, { recallExisting });
+        const r = await api.uploadPatients(file, { recallExisting, ignoreColumnCheck });
         setResult(r);
+        setRejected(null);
         onDone?.();
       } catch (e) {
-        setError(e.message || "Upload failed");
+        const message = e.message || "Upload failed";
+        setError(message);
+        // A column complaint is the one failure worth offering to override: the sheet
+        // may be unusual rather than wrong, and the message says which columns and
+        // what they hold, so the decision can be made on evidence.
+        setRejected(message.startsWith("The columns in this sheet") ? file : null);
       } finally {
         setBusy(false);
       }
@@ -395,6 +405,17 @@ function Upload({ onDone }) {
       {error && (
         <div className="mt-3 rounded-[10px] px-3 py-2 text-[13px]" style={{ background: "rgba(208,59,59,0.10)", color: "var(--critical)" }} role="alert">
           {error}
+          {rejected && (
+            /* Offered only for a column complaint, and only after the message above
+               has said which columns and what they hold. A sheet can be unusual
+               rather than wrong, and refusing it outright would leave no way through
+               at an inconvenient hour. */
+            <div className="mt-2">
+              <Button onClick={() => send(rejected, { ignoreColumnCheck: true })} disabled={busy}>
+                Upload anyway
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
