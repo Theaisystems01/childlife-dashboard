@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 from ..db import calls
 from ..reporting import REPORT_COLUMNS, connection_label, input_label, to_report_row
 from ..security import current_user
-from .calls import build_filter
+from .calls import build_filter, latest_per_number
 
 router = APIRouter(prefix="/api/export", tags=["export"])
 
@@ -71,6 +71,8 @@ async def export_xlsx(
     # Repeatable: ?batches=FILE+1...&batches=FILE+2... so several uploads can be shown
     # together, which is the question actually asked of this screen.
     batches: list[str] | None = Query(None),
+    # One row per number instead of one per dial, as on the screen this exports.
+    latest_only: bool = False,
     complaints_only: bool = False,
     _: dict[str, Any] = Depends(current_user),
 ) -> StreamingResponse:
@@ -98,7 +100,15 @@ async def export_xlsx(
 
     widths = [len(column) for column in EXPORT_COLUMNS]
     row_number = 1
-    async for doc in calls().find(query, {"logs": 0}).sort("timestamp", -1):
+    # Both cursors yield the same shape of document, newest first; the only difference
+    # is whether a number's earlier attempts are in it. The sheet has to agree with the
+    # table it was exported from, so this follows the same switch.
+    rows = (
+        calls().aggregate(latest_per_number(query), allowDiskUse=True)
+        if latest_only
+        else calls().find(query, {"logs": 0}).sort("timestamp", -1)
+    )
+    async for doc in rows:
         row = {
             "Status": connection_label(doc),
             "Input": input_label(doc),

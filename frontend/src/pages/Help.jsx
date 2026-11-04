@@ -246,6 +246,13 @@ function StaffGuide() {
           </div>
         </div>
         <p className="mt-4 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+          A family we could not reach the first time is called again, and the table lists
+          every attempt — so the same number can appear two or three times. Switch{" "}
+          <strong>Rows</strong> to <strong>Latest per number</strong> to see each number
+          once, with only its most recent call. That is the setting to use when you are
+          counting families rather than checking the dialling.
+        </p>
+        <p className="mt-4 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Click any row to open the full record: the report fields, how long the call took,
           what it cost, and the complete conversation if the family spoke to the assistant.
         </p>
@@ -256,7 +263,10 @@ function StaffGuide() {
         <p className="mt-2 text-[13.5px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Press <strong>↓ Export Excel</strong> on the Call records page. The file contains
           exactly the columns the foundation uses, in the foundation&rsquo;s order, and only
-          the rows currently shown — so filter first if you want a subset.
+          the rows currently shown — so filter first if you want a subset. The{" "}
+          <strong>Rows</strong> setting counts too: on{" "}
+          <strong>Latest per number</strong> the sheet has one line per family instead of
+          one per attempt.
         </p>
         <p className="mt-3 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Times in the export are Pakistan time and are real dates, so sorting and

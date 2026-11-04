@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, fetchBlobUrl } from "../lib/api";
 import { PK_TIME_ZONE, formatWhen } from "../lib/time";
-import { Badge, Button, Card, EmptyState, Field, Input, MultiSelect, Pagination, Select, Skeleton } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, MultiSelect, Pagination, Segmented, Select, Skeleton } from "../components/ui";
 
 const COLUMNS = [
   "Phone Number",
@@ -173,7 +173,7 @@ function pkr(value) {
 const pkToday = () => new Date().toLocaleDateString("en-CA", { timeZone: PK_TIME_ZONE });
 
 export default function Calls({ filters }) {
-  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "", batches: [] });
+  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "", batches: [], latest_only: false });
   const [debounced, setDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
@@ -186,7 +186,7 @@ export default function Calls({ filters }) {
     return () => clearTimeout(t);
   }, [query.search]);
 
-  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to, query.batches]);
+  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to, query.batches, query.latest_only]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +198,7 @@ export default function Calls({ filters }) {
     return () => {
       cancelled = true;
     };
-  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, query.batches, page]);
+  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, query.batches, query.latest_only, page]);
 
   const set = (key) => (value) => setQuery((q) => ({ ...q, [key]: value }));
 
@@ -259,11 +259,38 @@ export default function Calls({ filters }) {
             {downloading ? "Preparing…" : "↓ Export Excel"}
           </Button>
         </div>
+
+        {/* On its own row because it changes what a row *is*, rather than which rows
+            are shown — and because the export follows it, so it has to be visible
+            rather than tucked in among the dropdowns. */}
+        <div
+          className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-4"
+          style={{ borderColor: "var(--border)" }}
+        >
+          <Segmented
+            label="Rows"
+            value={query.latest_only}
+            onChange={set("latest_only")}
+            options={[
+              { label: "Every attempt", value: false },
+              { label: "Latest per number", value: true },
+            ]}
+          />
+          <span className="text-[12.5px]" style={{ color: "var(--text-muted)" }}>
+            {query.latest_only
+              ? "One row per phone number — the most recent call to it, earlier tries hidden."
+              : "One row per dial, so a number called twice appears twice."}
+          </span>
+        </div>
       </Card>
 
       <Card
-        title={`Call records${data ? ` · ${data.total}` : ""}`}
-        subtitle="The foundation reporting format, newest first"
+        title={`${query.latest_only ? "Numbers called" : "Call records"}${data ? ` · ${data.total}` : ""}`}
+        subtitle={
+          query.latest_only
+            ? "One row per number, showing its latest call — newest first"
+            : "The foundation reporting format, newest first"
+        }
       >
         {!data ? (
           <div className="flex flex-col gap-2">
@@ -348,7 +375,7 @@ export default function Calls({ filters }) {
             pages={data.pages}
             total={data.total}
             onPage={setPage}
-            unit="calls"
+            unit={query.latest_only ? "numbers" : "calls"}
           />
         )}
       </Card>

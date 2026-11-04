@@ -18,6 +18,7 @@ from ..reporting import (
     INPUT_LABEL_EXPR,
     NO_COMPLAINT_REASONS,
     OUTCOME_EXPR,
+    PHONE_KEY_EXPR,
     extract_transcript,
     to_call_summary,
 )
@@ -124,6 +125,33 @@ def build_filter(
     return query
 
 
+def latest_per_number(query: dict[str, Any]) -> list[dict[str, Any]]:
+    """Reduce a filtered set of calls to the newest call on each number.
+
+    The table lists one row per dial, so a number that went unanswered twice before
+    someone picked up appears three times. That is the right default for auditing the
+    dialler and the wrong one for reading the feedback: 18,461 calls were placed to
+    11,966 numbers, and the 6,361 numbers with more than one row make the report look
+    like more families than were actually reached.
+
+    Grouping happens after the filters, not before, which is what makes this compose
+    with them: with Status "Not answered" selected it returns the most recent
+    *unanswered* attempt on each number, not the most recent attempt of those numbers
+    whose last call failed. Same rule the batch filter already follows.
+    """
+    return [
+        {"$match": query},
+        # Ahead of $unset so the timestamp index can serve the sort, and ahead of the
+        # $group so $first is the latest attempt rather than an arbitrary one.
+        {"$sort": {"timestamp": -1}},
+        {"$unset": "logs"},  # transcripts are large and nothing on this path reads them
+        {"$group": {"_id": PHONE_KEY_EXPR, "latest": {"$first": "$$ROOT"}}},
+        {"$replaceWith": "$latest"},
+        # $group discards the incoming order, so the page has to be sorted again.
+        {"$sort": {"timestamp": -1}},
+    ]
+
+
 @router.get("")
 async def list_calls(
     search: str | None = None,
@@ -138,6 +166,8 @@ async def list_calls(
     # Repeatable: ?batches=FILE+1...&batches=FILE+2... so several uploads can be shown
     # together, which is the question actually asked of this screen.
     batches: list[str] | None = Query(None),
+    # One row per number instead of one per dial, keeping the newest call on each.
+    latest_only: bool = False,
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
     _: dict[str, Any] = Depends(current_user),
@@ -147,16 +177,32 @@ async def list_calls(
         batches,
     )
     collection = calls()
-
-    total = await collection.count_documents(query)
-    cursor = (
-        collection.find(query, {"logs": 0})  # transcripts are large; fetched on demand
-        .sort("timestamp", -1)
-        .skip((page - 1) * limit)
-        .limit(limit)
-    )
+    skip = (page - 1) * limit
     tariff = await load_tariff()
-    items = [to_call_summary(doc, tariff) async for doc in cursor]
+
+    if latest_only:
+        # $facet so the page and the count come out of one pass over the grouped
+        # stream, rather than grouping 18,000 records twice to answer both.
+        pipeline = latest_per_number(query) + [
+            {"$facet": {
+                "items": [{"$skip": skip}, {"$limit": limit}],
+                "total": [{"$count": "value"}],
+            }}
+        ]
+        faceted = await collection.aggregate(pipeline, allowDiskUse=True).to_list(1)
+        page_docs = faceted[0]["items"] if faceted else []
+        counted = faceted[0]["total"] if faceted else []
+        total = counted[0]["value"] if counted else 0
+        items = [to_call_summary(doc, tariff) for doc in page_docs]
+    else:
+        total = await collection.count_documents(query)
+        cursor = (
+            collection.find(query, {"logs": 0})  # transcripts are large; fetched on demand
+            .sort("timestamp", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+        items = [to_call_summary(doc, tariff) async for doc in cursor]
 
     return {
         "items": items,

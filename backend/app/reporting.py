@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from .phones import SIGNIFICANT_DIGITS
 from .pricing import Tariff, cost_breakdown
 from .timeutil import iso_utc
 
@@ -224,6 +225,57 @@ OUTCOME_EXPR: dict[str, Any] = {
                 ],
                 "default": "—",
             }
+        },
+    }
+}
+
+# Which subscriber a call was placed to, as a Mongo expression, so the table can show
+# one row per number instead of one per dial. Mirrors phones.normalize(): the same
+# number may be written 03001234567, +923001234567 or 00923001234567, so only the
+# significant trailing digits identify it. The digits are gathered with $regexFindAll
+# rather than assumed, because the three fields below were written by several agent
+# versions and none of them promises a format.
+#
+# A record with no number at all falls back to its own session id. Collapsing those
+# together would merge unrelated calls into one row, which is worse than listing them.
+PHONE_KEY_EXPR: dict[str, Any] = {
+    "$let": {
+        "vars": {
+            "digits": {
+                "$reduce": {
+                    "input": {
+                        "$regexFindAll": {
+                            "input": {
+                                "$toString": {
+                                    "$ifNull": [
+                                        "$feedback_output.Phone Number",
+                                        "$patient_context.contact_number",
+                                        "$caller_number",
+                                        "",
+                                    ]
+                                }
+                            },
+                            "regex": r"\d",
+                        }
+                    },
+                    "initialValue": "",
+                    "in": {"$concat": ["$$value", "$$this.match"]},
+                }
+            },
+        },
+        "in": {
+            "$cond": [
+                {"$gte": [{"$strLenCP": "$$digits"}, SIGNIFICANT_DIGITS]},
+                {"$substrCP": [
+                    "$$digits",
+                    {"$subtract": [{"$strLenCP": "$$digits"}, SIGNIFICANT_DIGITS]},
+                    SIGNIFICANT_DIGITS,
+                ]},
+                # Shorter than a full number, so it cannot be matched against one:
+                # keyed by the record itself rather than by a fragment that might
+                # coincide with another record's.
+                {"$concat": ["session:", {"$toString": {"$ifNull": ["$session_id", "$_id"]}}]},
+            ]
         },
     }
 }
