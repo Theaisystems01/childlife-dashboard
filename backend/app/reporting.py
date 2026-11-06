@@ -36,6 +36,28 @@ def _first(record: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def name_the_patient(remarks: str, patient_name: str) -> str:
+    """Put the child's name at the front of the remark.
+
+    The Foundation reads and forwards the Remarks text on its own, away from the Patient
+    Name column beside it, and a complaint with no name in it cannot be acted on. Asked
+    for by the client on 2026-11-06.
+
+    Done here rather than in the agent so it applies to every record already written, and
+    so the name comes from the patient list rather than from whatever the model chose to
+    repeat. Skipped when the name is already in the text — the agent names the child in
+    76% of openings and often again in the description — and when there is no remark at
+    all, because a cell holding only a name reads as a complaint about nothing.
+    """
+    text = (remarks or "").strip()
+    name = (patient_name or "").strip()
+    if not text or not name:
+        return text
+    if name.split()[0].casefold() in text.casefold():
+        return text
+    return f"{name}: {text}"
+
+
 def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
     """Flatten one conversation-log document into a single report row.
 
@@ -51,6 +73,8 @@ def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
     if not received and isinstance(timestamp, datetime):
         received = iso_utc(timestamp)
 
+    patient_name = _first(output, "Patient Name") or _first(patient, "patient_name")
+
     return {
         "Phone Number": _first(output, "Phone Number", "Contact Number")
         or _first(patient, "contact_number", "caller", "caller_number")
@@ -62,9 +86,12 @@ def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
         or _first(patient, "patient_category"),
         "ER name": _first(output, "ER name", "ER Name") or _first(patient, "er_name"),
         "MR Number": _first(output, "MR Number") or _first(patient, "mr_number"),
-        "Patient Name": _first(output, "Patient Name") or _first(patient, "patient_name"),
-        "Remarks": _first(output, "Remarks", "Complaint Details Shared by Attendant")
-        or _first(summary, "description_of_complaint"),
+        "Patient Name": patient_name,
+        "Remarks": name_the_patient(
+            _first(output, "Remarks", "Complaint Details Shared by Attendant")
+            or _first(summary, "description_of_complaint"),
+            patient_name,
+        ),
         # The complaint's category, or why there is no complaint. Blank on two thirds of
         # rows otherwise, with the reason stranded in a column about keypresses.
         "Complaint Category": outcome_label(doc),
