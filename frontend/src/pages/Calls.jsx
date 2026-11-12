@@ -83,6 +83,99 @@ function SurveySummary({ stats }) {
   );
 }
 
+/** How satisfied each ER's families are, question by question.
+ *
+ *  The network-wide figure says whether the service is fine; this says which ER to go
+ *  and look at, which is the only version of the number anyone can act on.
+ */
+function SurveyByEr({ stats }) {
+  if (!stats) return <Skeleton className="h-40" />;
+  const rows = stats.by_er || [];
+  if (!rows.length) {
+    return (
+      <Card title="By ER">
+        <EmptyState
+          title="No answered survey calls yet"
+          hint="Each ER appears here once a family from it has answered at least one question."
+        />
+      </Card>
+    );
+  }
+  const questions = stats.questions || [];
+  return (
+    <Card
+      title="By ER"
+      subtitle="Share answering yes, per question. The count beneath each is how many families answered it."
+    >
+      <div className="-mx-5 overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>ER</th>
+              <th className="px-3 py-2.5 text-right font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Answered</th>
+              <th className="px-3 py-2.5 text-right font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>All four</th>
+              {questions.map((q) => (
+                <th
+                  key={q.field}
+                  className="px-3 py-2.5 text-right font-medium"
+                  style={{ color: "var(--text-muted)", minWidth: 104 }}
+                  title={q.question}
+                >
+                  {/* Shortened, because four full question headings across a table push
+                      the ER column off the screen. The full text is in the tooltip and
+                      spelled out in the summary above. */}
+                  {q.question.replace(/^Satisfied with /, "").replace(/^Treated /, "")}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.er} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="px-3 py-2.5 font-medium whitespace-nowrap">{row.er}</td>
+                <td className="tnum px-3 py-2.5 text-right">{row.connected}</td>
+                <td className="tnum px-3 py-2.5 text-right" style={{ color: "var(--text-muted)" }}>
+                  {row.completed}
+                </td>
+                {row.questions.map((q) => (
+                  <td key={q.field} className="px-3 py-2.5 text-right">
+                    {q.percent_yes === null ? (
+                      <span style={{ color: "var(--text-muted)" }} title="Nobody at this ER answered this question">—</span>
+                    ) : (
+                      <>
+                        <span
+                          className="tnum font-medium"
+                          style={{
+                            // Colour follows the number, and the number is always
+                            // visible beside it: a percentage from three answers is not
+                            // evidence, so the denominator is on screen, not in a
+                            // tooltip nobody opens.
+                            color:
+                              q.percent_yes >= 80
+                                ? "var(--good)"
+                                : q.percent_yes >= 50
+                                  ? "var(--warning-ink)"
+                                  : "var(--critical)",
+                          }}
+                        >
+                          {q.percent_yes}%
+                        </span>
+                        <span className="tnum ml-1 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                          /{q.answered}
+                        </span>
+                      </>
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 /** Did we reach the number, and on which try. */
 
 function TrackPlayer({ sessionId, track, label }) {
@@ -237,8 +330,10 @@ function pkr(value) {
 /** Today as YYYY-MM-DD in Pakistan, so the pickers cannot run past the current day. */
 const pkToday = () => new Date().toLocaleDateString("en-CA", { timeZone: PK_TIME_ZONE });
 
-export default function Calls({ filters }) {
-  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "", batches: [], latest_only: false, campaign: "ai" });
+export default function Calls({ filters, campaign = "ai" }) {
+  // The campaign is the page, not a filter — App.jsx passes it per route, and the route
+  // change remounts this component, so none of the state below leaks between the two.
+  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "", batches: [], latest_only: false });
   const [debounced, setDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
@@ -246,10 +341,10 @@ export default function Calls({ filters }) {
   const [downloading, setDownloading] = useState(false);
   const [surveyStats, setSurveyStats] = useState(null);
 
-  const survey = query.campaign === "robocall";
+  const survey = campaign === "robocall";
   // The server owns the column order for each campaign; COLUMNS is only the fallback
   // for the first paint, before /filters has answered.
-  const columns = filters?.columns?.[query.campaign] || COLUMNS;
+  const columns = filters?.columns?.[campaign] || COLUMNS;
   // Named by the server, so the question list lives in exactly one place.
   const answerColumns = new Set(filters?.answer_columns || []);
 
@@ -259,19 +354,19 @@ export default function Calls({ filters }) {
     return () => clearTimeout(t);
   }, [query.search]);
 
-  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to, query.batches, query.latest_only, query.campaign]);
+  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to, query.batches, query.latest_only]);
 
   useEffect(() => {
     let cancelled = false;
     setData(null);
     api
-      .calls({ ...query, search: debounced, page, limit: 25 })
+      .calls({ ...query, campaign, search: debounced, page, limit: 25 })
       .then((d) => !cancelled && setData(d))
       .catch(() => !cancelled && setData({ items: [], total: 0, pages: 1 }));
     return () => {
       cancelled = true;
     };
-  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, query.batches, query.latest_only, query.campaign, page]);
+  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, query.batches, query.latest_only, page]);
 
   // Per-question results, fetched only in survey mode — the feedback view has no use
   // for them and should not pay for the query.
@@ -296,7 +391,7 @@ export default function Calls({ filters }) {
   async function download() {
     setDownloading(true);
     try {
-      await api.download({ ...query, search: debounced });
+      await api.download({ ...query, campaign, search: debounced });
     } finally {
       setDownloading(false);
     }
@@ -305,28 +400,6 @@ export default function Calls({ filters }) {
   return (
     <div className="flex flex-col gap-5">
       <Card>
-        {/* First control on the page, because it decides what every other one means:
-            a survey call has no complaint category and no remark, so the filters and
-            the columns below are not the same set in the two modes. */}
-        {(filters?.campaigns?.length || 0) > 1 && (
-          <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <Segmented
-              label="Campaign"
-              value={query.campaign}
-              onChange={set("campaign")}
-              options={filters.campaigns.map((c) => ({
-                label: `${c.label}${c.calls ? ` · ${c.calls.toLocaleString()}` : ""}`,
-                value: c.value,
-              }))}
-            />
-            <span className="text-[12.5px]" style={{ color: "var(--text-muted)" }}>
-              {survey
-                ? "Four keypress questions. No conversation, no recording, no AI cost."
-                : "The AI feedback interview: a complaint in the family's own words."}
-            </span>
-          </div>
-        )}
-
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[230px] flex-1">
             <Field label="Search">
@@ -405,6 +478,7 @@ export default function Calls({ filters }) {
       </Card>
 
       {survey && <SurveySummary stats={surveyStats} />}
+      {survey && <SurveyByEr stats={surveyStats} />}
 
       <Card
         title={`${query.latest_only ? "Numbers called" : survey ? "Survey calls" : "Call records"}${data ? ` · ${data.total}` : ""}`}

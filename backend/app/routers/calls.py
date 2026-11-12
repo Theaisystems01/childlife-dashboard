@@ -296,20 +296,10 @@ async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str,
         # Newest upload first, which is the order they are thought about, and with the
         # call count so an upload that produced nothing is obvious rather than puzzling.
         "batches": batch_options,
-        # The two campaigns, and how many calls each has. The survey option is listed
-        # with a zero count rather than hidden when none have been placed, so it is
-        # discoverable before the first campaign runs rather than appearing from nowhere
-        # afterwards.
-        "campaigns": [
-            {"value": "ai", "label": "Feedback calls",
-             "calls": await collection.count_documents(feedback_only)},
-            {"value": "robocall", "label": "Robocall survey",
-             "calls": await collection.count_documents(
-                 {"archived": {"$ne": True}, "campaign": "robocall"}
-             )},
-        ],
         # Column order per campaign, so the table does not carry its own copy of a
-        # list that is defined in reporting.py.
+        # list that is defined in reporting.py. The campaign itself is no longer a
+        # control here — each one has its own page — so this endpoint no longer counts
+        # them, which was two collection scans per page load for a label nothing reads.
         "columns": {"ai": REPORT_COLUMNS, "robocall": SURVEY_COLUMNS},
         # Which of those columns hold a yes/no answer, so the table can render them as
         # badges without keeping its own copy of the question list.

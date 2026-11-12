@@ -16,6 +16,16 @@ const Icon = {
       <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h2.2a1 1 0 0 1 .95.68l1 3a1 1 0 0 1-.3 1.1L8 10a12 12 0 0 0 6 6l1.22-1.35a1 1 0 0 1 1.1-.3l3 1a1 1 0 0 1 .68.95v2.2A1.5 1.5 0 0 1 18.5 20 15.5 15.5 0 0 1 4 5.5Z" />
     </>
   ),
+  robocall: (
+    <>
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <circle cx="9" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+      <path d="M8.5 17.5h7" />
+    </>
+  ),
   sun: (
     <>
       <circle cx="12" cy="12" r="4" />
@@ -80,7 +90,8 @@ function Glyph({ name, size = 18 }) {
 
 const NAV = [
   { id: "overview", label: "Overview", icon: "overview", hint: "Trends and breakdowns" },
-  { id: "calls", label: "Call records", icon: "calls", hint: "Every call, searchable" },
+  { id: "calls", label: "Feedback calls", icon: "calls", hint: "The AI interview, in the report format" },
+  { id: "robocalls", label: "Robocall survey", icon: "robocall", hint: "Four keypress questions, by ER" },
   { id: "queue", label: "Call queue", icon: "queue", hint: "Who still needs calling" },
   { id: "settings", label: "Settings", icon: "settings", hint: "Retries and calling hours" },
   { id: "help", label: "Help", icon: "help", hint: "How to use this dashboard" },

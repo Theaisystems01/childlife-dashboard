@@ -257,13 +257,14 @@ function StaffGuide() {
           what it cost, and the complete conversation if the family spoke to the assistant.
         </p>
         <p className="mt-4 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-          <strong>Campaign</strong>, at the top of the page, switches between the two kinds
-          of call. <strong>Feedback calls</strong> are the AI interview — the family
-          describes a complaint in their own words, and it arrives as a remark and a
-          category. <strong>Robocall survey</strong> is the four-question recorded call
-          where the family presses <strong>1</strong> for haan and <strong>2</strong> for
-          nahi; it has no conversation, no recording and no AI cost, so the table shows
-          one column per question instead of a remark. The two are counted separately
+          The two kinds of call have their own pages in the sidebar.{" "}
+          <strong>Feedback calls</strong> is the AI interview — the family describes a
+          complaint in their own words, and it arrives as a remark and a category.{" "}
+          <strong>Robocall survey</strong> is the four-question recorded call where the
+          family presses <strong>1</strong> for haan and <strong>2</strong> for nahi; it
+          has no conversation, no recording and no AI cost, so the table shows one column
+          per question instead of a remark, and a <strong>By ER</strong> table above it
+          gives each ER's results question by question. The two are counted separately
           everywhere, and the Overview page describes feedback calls only.
         </p>
         <p className="mt-4 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
@@ -283,9 +284,9 @@ function StaffGuide() {
           the rows currently shown — so filter first if you want a subset. The{" "}
           <strong>Rows</strong> setting counts too: on{" "}
           <strong>Latest per number</strong> the sheet has one line per family instead of
-          one per attempt. On <strong>Robocall survey</strong> you get the survey sheet
-          instead &mdash; the four answers per family, with no remark or complaint column,
-          since a survey collects neither.
+          one per attempt. Exporting from the <strong>Robocall survey</strong> page gives
+          the survey sheet instead &mdash; the four answers per family, with no remark or
+          complaint column, since a survey collects neither.
         </p>
         <p className="mt-3 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Times in the export are Pakistan time and are real dates, so sorting and

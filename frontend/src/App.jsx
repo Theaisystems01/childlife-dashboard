@@ -16,9 +16,20 @@ const PAGES = {
     Component: Overview,
   },
   calls: {
-    title: "Call records",
-    description: "Every call in the foundation reporting format, searchable and exportable.",
+    title: "Feedback calls",
+    description: "The AI interview, in the foundation reporting format — searchable and exportable.",
     Component: Calls,
+    // The campaign comes from the page now rather than from a control inside it. Two
+    // kinds of call that share a collection and share almost nothing else: a survey has
+    // no remark, no complaint category and no recording, so one screen that switched
+    // between them meant half its filters and columns were dead in either mode.
+    props: { campaign: "ai" },
+  },
+  robocalls: {
+    title: "Robocall survey",
+    description: "Four keypress questions, answered with 1 for haan and 2 for nahi — results by ER.",
+    Component: Calls,
+    props: { campaign: "robocall" },
   },
   queue: {
     title: "Call queue",
@@ -133,7 +144,7 @@ export default function App() {
           </header>
 
           <div key={tab} className="animate-in">
-            <Component filters={filters} user={user} />
+            <Component filters={filters} user={user} {...(page.props || {})} />
           </div>
         </main>
       </div>

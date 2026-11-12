@@ -257,6 +257,60 @@ async def survey_stats(
     status_counts = await _facet_counts(match, "status")
     fully = next((c["calls"] for c in completion if c["answered"] == len(SURVEY_QUESTIONS)), 0)
 
+    # --- the same thing again, per ER ----------------------------------------
+    # This is the question the Foundation actually acts on: a satisfaction figure for
+    # the whole network tells them the service is fine, while the same figure split by
+    # ER tells them which ER to visit. Grouped on the coalesced name because the ER is
+    # written to the patient record by the upload and echoed into feedback_output by the
+    # agent, and older rows have only one of the two.
+    er_expr = {
+        "$ifNull": [
+            "$patient_context.er_name",
+            {"$ifNull": ["$feedback_output.ER name", {"$ifNull": ["$feedback_output.ER Name", ""]}]},
+        ]
+    }
+    er_group: dict[str, Any] = {
+        "_id": er_expr,
+        "calls": {"$sum": 1},
+        "completed": {"$sum": {
+            "$cond": [{"$eq": [{"$ifNull": ["$answered_count", 0]}, len(SURVEY_QUESTIONS)]}, 1, 0]
+        }},
+    }
+    for field, _heading in SURVEY_QUESTIONS:
+        er_group[f"{field}__yes"] = {"$sum": {"$cond": [{"$eq": [f"$survey.{field}", "yes"]}, 1, 0]}}
+        er_group[f"{field}__no"] = {"$sum": {"$cond": [{"$eq": [f"$survey.{field}", "no"]}, 1, 0]}}
+
+    by_er: list[dict[str, Any]] = []
+    async for row in collection.aggregate(
+        [{"$match": {**match, "connected": True}}, {"$group": er_group}, {"$sort": {"calls": -1}}]
+    ):
+        questions_here = []
+        for field, heading in SURVEY_QUESTIONS:
+            yes = int(row.get(f"{field}__yes", 0))
+            no = int(row.get(f"{field}__no", 0))
+            answered_here = yes + no
+            questions_here.append({
+                "field": field,
+                "question": heading,
+                "yes": yes,
+                "no": no,
+                "no_answer": max(0, int(row["calls"]) - answered_here),
+                "answered": answered_here,
+                # None, not 0, when nobody answered. An ER with no answers yet is not an
+                # ER with no satisfied families, and a 0% that means "no data" is the
+                # kind of number that gets someone sent to the wrong hospital.
+                "percent_yes": round(100 * yes / answered_here, 1) if answered_here else None,
+            })
+        by_er.append({
+            # Unnamed rather than dropped: a survey call whose patient row carried no ER
+            # still happened, and hiding it would make the per-ER counts disagree with
+            # the totals above for no visible reason.
+            "er": row["_id"] or "(no ER recorded)",
+            "connected": int(row["calls"]),
+            "completed": int(row["completed"]),
+            "questions": questions_here,
+        })
+
     return {
         "kpis": {
             "total_calls": total,
@@ -268,6 +322,7 @@ async def survey_stats(
             "partial": status_counts.get("partial", 0),
         },
         "questions": questions,
+        "by_er": by_er,
         "completion": completion,
         "status": _ordered(status_counts, ("completed", "partial", "no_response", "not_connected")),
     }
