@@ -198,11 +198,18 @@ async def template(_: dict[str, Any] = Depends(current_user)) -> StreamingRespon
     )
 
 
+# Which campaign an upload is for. Stamped on every patient in the sheet and read by
+# the dialler per call, so a survey round and a feedback round can sit in the queue at
+# the same time without a global switch anyone has to remember to put back.
+CAMPAIGNS = ("ai", "robocall")
+
+
 @router.post("/upload")
 async def upload(
     file: UploadFile = File(...),
     recall_existing: bool = Form(True),
     ignore_column_check: bool = Form(False),
+    campaign: str = Form("ai"),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     """Import patients from an .xlsx sheet.
@@ -281,6 +288,15 @@ async def upload(
             ),
         )
 
+    # Rejected rather than defaulted: silently importing a survey round as feedback
+    # calls would ring families with the wrong call entirely, and the upload summary
+    # would say nothing about it.
+    if campaign not in CAMPAIGNS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown campaign {campaign!r}. Expected one of: {', '.join(CAMPAIGNS)}",
+        )
+
     batch_id = f"{datetime.now():%Y%m%d-%H%M%S}"
     collection = patients()
     await collection.create_index("phone_key", unique=True)
@@ -335,6 +351,10 @@ async def upload(
             "patient_category": record.get("patient_category", ""),
             "disposition_category": record.get("disposition_category", ""),
             "batch_id": batch_id,
+            # Which call these people get. Travels with the patient rather than living
+            # in a global setting, so the choice cannot be left switched on by mistake
+            # after a test.
+            "campaign": campaign,
             "source_file": file.filename or "",
             "uploaded_at": utcnow(),
             "uploaded_by": user.get("username", ""),
@@ -385,6 +405,7 @@ async def upload(
 
     summary = {
         "batch_id": batch_id,
+        "campaign": campaign,
         "filename": file.filename or "",
         "created": created,
         "updated": updated,
@@ -565,6 +586,8 @@ def _clean(doc: dict[str, Any]) -> dict[str, Any]:
     doc.setdefault("call_status", "pending")
     doc.setdefault("last_outcome", "")
     doc.setdefault("next_retry_at", None)
+    # Rows uploaded before campaigns existed were all feedback calls.
+    doc.setdefault("campaign", "ai")
     return doc
 
 
@@ -766,6 +789,9 @@ async def batches(_: dict[str, Any] = Depends(current_user)) -> list[dict[str, A
         out.append({
             "batch_id": batch_id,
             "filename": row.get("filename", ""),
+            # Uploads from before campaigns existed have no field; they were all
+            # feedback rounds, so that is what they read as rather than "unknown".
+            "campaign": row.get("campaign") or "ai",
             "uploaded_at": iso_utc(ts),
             "uploaded_by": row.get("uploaded_by", ""),
             "rows_read": row.get("rows_read", 0),

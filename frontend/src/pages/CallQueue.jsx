@@ -213,7 +213,7 @@ function UploadHistory({ reload, onOpen }) {
         <table className="w-full text-[13px]">
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border)" }}>
-              {["File", "Uploaded", "By", "Rows", "Added", "Updated", "Duplicates", "Skipped", "Still to call"].map((h) => (
+              {["File", "Which call", "Uploaded", "By", "Rows", "Added", "Updated", "Duplicates", "Skipped", "Still to call"].map((h) => (
                 <th key={h} className="whitespace-nowrap px-3 py-2.5 text-left font-medium" style={{ color: "var(--text-muted)" }}>
                   {h}
                 </th>
@@ -235,6 +235,15 @@ function UploadHistory({ reload, onOpen }) {
                   >
                     {b.filename || <span style={{ color: "var(--text-muted)" }}>{b.batch_id}</span>}
                   </button>
+                </td>
+                <td className="whitespace-nowrap px-3 py-2.5">
+                  {/* Uploads from before campaigns existed read as feedback, which is
+                      what they were, rather than as unknown. */}
+                  {b.campaign === "robocall" ? (
+                    <Badge tone="warning">Robocall survey</Badge>
+                  ) : (
+                    <Badge>Feedback</Badge>
+                  )}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2.5" style={{ color: "var(--text-secondary)" }} title={formatWhen(b.uploaded_at)}>
                   {b.uploaded_at ? formatRelative(b.uploaded_at) : "—"}
@@ -278,6 +287,10 @@ function Upload({ onDone }) {
   // to the last one — visit date would have, but the foundation does not supply it —
   // so the person uploading has to tell us.
   const [recallExisting, setRecallExisting] = useState(true);
+  // Which call this sheet's families get. Chosen per upload rather than as a global
+  // setting: a survey round and a feedback round can then sit in the queue together,
+  // and nobody can leave a test switched on afterwards.
+  const [campaign, setCampaign] = useState("ai");
   // The sheet the server refused on its column contents, kept so it can be sent again
   // without being picked a second time. Set only by a rejection, cleared by anything
   // else, so "Upload anyway" cannot linger and apply to a later file.
@@ -291,7 +304,7 @@ function Upload({ onDone }) {
       setError("");
       setResult(null);
       try {
-        const r = await api.uploadPatients(file, { recallExisting, ignoreColumnCheck });
+        const r = await api.uploadPatients(file, { recallExisting, ignoreColumnCheck, campaign });
         setResult(r);
         setRejected(null);
         onDone?.();
@@ -368,6 +381,26 @@ function Upload({ onDone }) {
         </div>
       </div>
 
+      {/* Ahead of the new-round / correction choice, because it decides which call
+          these families receive at all — a bigger difference than whether they are
+          rung again. */}
+      <div className="mt-4 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+        <Segmented
+          label="Which call"
+          value={campaign}
+          onChange={setCampaign}
+          options={[
+            { label: "Feedback calls", value: "ai" },
+            { label: "Robocall survey", value: "robocall" },
+          ]}
+        />
+        <p className="mt-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
+          {campaign === "robocall"
+            ? "A recorded call asking four questions, answered with 1 for haan and 2 for nahi. No conversation, no recording, no AI cost."
+            : "The AI assistant asks for feedback and records the complaint in the family's own words."}
+        </p>
+      </div>
+
       <div className="mt-4 flex flex-col gap-2">
         <label className="flex cursor-pointer items-start gap-2.5">
           <input
@@ -432,6 +465,14 @@ function Upload({ onDone }) {
             )}
             {result.skipped > 0 && <span style={{ color: "var(--critical)" }}>{result.skipped} skipped</span>}
             <span style={{ color: "var(--text-muted)" }}>{result.total_patients} patients in total</span>
+            {/* Said back explicitly. Uploading a sheet as the wrong campaign rings
+                families with the wrong call entirely, and it is not recoverable once
+                the dialler has been through them. */}
+            {result.campaign === "robocall" ? (
+              <Badge tone="warning">Robocall survey</Badge>
+            ) : (
+              <Badge>Feedback calls</Badge>
+            )}
           </div>
 
           {result.problems?.length > 0 && (
