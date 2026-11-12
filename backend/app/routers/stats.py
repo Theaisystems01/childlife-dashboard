@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, Query
 
 from ..db import calls, get_db
 from ..pricing import Tariff
-from ..reporting import AREAS, COMPLAINT_CATEGORIES, COMPLAINT_SUBCATEGORIES
+from ..reporting import (
+    AREAS,
+    COMPLAINT_CATEGORIES,
+    COMPLAINT_SUBCATEGORIES,
+    SURVEY_QUESTIONS,
+)
 from ..security import current_user
 from .calls import build_filter
 
@@ -179,4 +184,90 @@ async def overview(
             key=lambda r: -r["value"],
         ),
         "trend": trend,
+    }
+
+
+@router.get("/survey")
+async def survey_stats(
+    days: int | None = None,
+    er: str | None = None,
+    batches: list[str] | None = Query(None),
+    _: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    """Results of the robocall survey: per question, and how far callers got.
+
+    Separate endpoint rather than a branch inside /overview, because almost nothing on
+    the Overview applies to a survey. There is no complaint category, no subcategory, no
+    area and no AI spend — a survey call never constructs a model. What there is instead
+    is four questions and a drop-off curve, and those have no column on that screen.
+
+    THE PERCENTAGE IS OF THE PEOPLE WHO ANSWERED THAT QUESTION. Not of everyone
+    reached: a call that rang a voicemail answers nothing, and dividing by everyone
+    would let voicemails drag a hospital's satisfaction figure down. Each question has
+    its own denominator for the same reason — callers drop off as the survey goes on, so
+    question four is answered by fewer people than question one, and that difference is
+    reported as `answered` rather than smuggled into the percentage.
+    """
+    match = build_filter(er=er, days=days, batches=batches, campaign="robocall")
+    collection = calls()
+
+    total = await collection.count_documents(match)
+    connected = await collection.count_documents({**match, "connected": True})
+
+    # One pass for all four questions, rather than four counts per question.
+    group: dict[str, Any] = {"_id": None}
+    for field, _heading in SURVEY_QUESTIONS:
+        group[f"{field}__yes"] = {"$sum": {"$cond": [{"$eq": [f"$survey.{field}", "yes"]}, 1, 0]}}
+        group[f"{field}__no"] = {"$sum": {"$cond": [{"$eq": [f"$survey.{field}", "no"]}, 1, 0]}}
+    tallies: dict[str, int] = {}
+    async for row in collection.aggregate(
+        [{"$match": {**match, "connected": True}}, {"$group": group}]
+    ):
+        tallies = {k: v for k, v in row.items() if k != "_id"}
+
+    questions = []
+    for field, heading in SURVEY_QUESTIONS:
+        yes = int(tallies.get(f"{field}__yes", 0))
+        no = int(tallies.get(f"{field}__no", 0))
+        answered = yes + no
+        questions.append({
+            "field": field,
+            "question": heading,
+            "yes": yes,
+            "no": no,
+            # Everyone who was reached but did not answer THIS question — they hung up
+            # before it, or let it pass without pressing anything.
+            "no_answer": max(0, connected - answered),
+            "answered": answered,
+            "percent_yes": round(100 * yes / answered, 1) if answered else None,
+        })
+
+    # How far people got. The shape of this is the argument for or against a four
+    # question survey on the phone: if most calls stop after two, it is too long.
+    completion = []
+    async for row in collection.aggregate(
+        [
+            {"$match": {**match, "connected": True}},
+            {"$group": {"_id": {"$ifNull": ["$answered_count", 0]}, "calls": {"$sum": 1}}},
+            {"$sort": {"_id": 1}},
+        ]
+    ):
+        completion.append({"answered": int(row["_id"]), "calls": row["calls"]})
+
+    status_counts = await _facet_counts(match, "status")
+    fully = next((c["calls"] for c in completion if c["answered"] == len(SURVEY_QUESTIONS)), 0)
+
+    return {
+        "kpis": {
+            "total_calls": total,
+            "connected": connected,
+            "completed": fully,
+            # Of the people who picked up, how many answered all four.
+            "completion_rate": round(100 * fully / connected, 1) if connected else 0.0,
+            "no_response": status_counts.get("no_response", 0),
+            "partial": status_counts.get("partial", 0),
+        },
+        "questions": questions,
+        "completion": completion,
+        "status": _ordered(status_counts, ("completed", "partial", "no_response", "not_connected")),
     }

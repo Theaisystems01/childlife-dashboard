@@ -109,6 +109,7 @@ const json = (path) => request(path).then((r) => r.json());
 export const api = {
   me: () => json("/api/auth/me"),
   overview: (params) => json(`/api/stats/overview?${qs(params)}`),
+  surveyStats: (params) => json(`/api/stats/survey?${qs(params)}`),
   calls: (params) => json(`/api/calls?${qs(params)}`),
   call: (id) => json(`/api/calls/${encodeURIComponent(id)}`),
   filters: () => json("/api/calls/filters"),

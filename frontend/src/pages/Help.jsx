@@ -256,6 +256,23 @@ function StaffGuide() {
           Click any row to open the full record: the report fields, how long the call took,
           what it cost, and the complete conversation if the family spoke to the assistant.
         </p>
+        <p className="mt-4 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+          <strong>Campaign</strong>, at the top of the page, switches between the two kinds
+          of call. <strong>Feedback calls</strong> are the AI interview — the family
+          describes a complaint in their own words, and it arrives as a remark and a
+          category. <strong>Robocall survey</strong> is the four-question recorded call
+          where the family presses <strong>1</strong> for haan and <strong>2</strong> for
+          nahi; it has no conversation, no recording and no AI cost, so the table shows
+          one column per question instead of a remark. The two are counted separately
+          everywhere, and the Overview page describes feedback calls only.
+        </p>
+        <p className="mt-4 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+          On the survey, a blank answer means the family never pressed a key for that
+          question &mdash; they rang off, or let it pass. It does <strong>not</strong> mean
+          they answered nahi. The percentages above the table are worked out only from the
+          families who actually answered that question, which is why question four is
+          usually based on fewer answers than question one.
+        </p>
       </Card>
 
       <Card>
@@ -266,7 +283,9 @@ function StaffGuide() {
           the rows currently shown — so filter first if you want a subset. The{" "}
           <strong>Rows</strong> setting counts too: on{" "}
           <strong>Latest per number</strong> the sheet has one line per family instead of
-          one per attempt.
+          one per attempt. On <strong>Robocall survey</strong> you get the survey sheet
+          instead &mdash; the four answers per family, with no remark or complaint column,
+          since a survey collects neither.
         </p>
         <p className="mt-3 text-[13px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Times in the export are Pakistan time and are real dates, so sorting and

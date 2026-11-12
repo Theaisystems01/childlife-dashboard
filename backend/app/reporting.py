@@ -22,9 +22,46 @@ REPORT_COLUMNS = [
     "Area",
 ]
 
+# The robocall survey's four questions: stored field, and the column it reads as.
+#
+# Order matters — it is the order the questions are asked in, and the column order of
+# the report. Mirrors QUESTIONS in robocall_prompts.py in the agent repo; the two change
+# together, and a question added there needs adding here or its answers go unreported.
+SURVEY_QUESTIONS: tuple[tuple[str, str], ...] = (
+    ("satisfied_with_treatment", "Satisfied with treatment"),
+    ("treated_on_time", "Treated on time"),
+    ("satisfied_with_staff", "Satisfied with staff"),
+    ("satisfied_with_cleanliness", "Satisfied with cleanliness"),
+)
+
+# A survey row carries the same identity columns as the feedback report, then one column
+# per question in place of the complaint fields. There is no complaint on a survey call
+# to categorise, and no remark: four keypresses are the whole of what was collected.
+SURVEY_COLUMNS = [
+    "Phone Number",
+    "Received Time",
+    "Disposition Catg",
+    "Patient Category",
+    "ER name",
+    "MR Number",
+    "Patient Name",
+    *[heading for _, heading in SURVEY_QUESTIONS],
+    "Questions Answered",
+]
+
 COMPLAINT_CATEGORIES = ("Treatment", "Behavior", "Waiting Time")
 COMPLAINT_SUBCATEGORIES = ("Nursing", "Doctor", "Pharmacy", "Security Guard")
 AREAS = ("Triage", "FTO", "Retention Area", "Counter", "Ward", "Gate", "Other")
+
+
+def is_survey(doc: dict[str, Any]) -> bool:
+    """Is this a robocall survey rather than an AI feedback interview?
+
+    Stamped by robocall.py as `campaign: "robocall"`. Checked on the document rather
+    than inferred from the absence of complaint fields: a feedback call where the family
+    said nothing has no complaint fields either, and must not be read as a survey.
+    """
+    return doc.get("campaign") == "robocall"
 
 
 def _first(record: dict[str, Any], *keys: str) -> str:
@@ -58,12 +95,56 @@ def name_the_patient(remarks: str, patient_name: str) -> str:
     return f"{name}: {text}"
 
 
+def to_survey_row(doc: dict[str, Any]) -> dict[str, Any]:
+    """Flatten one robocall survey into a report row: who, and their four answers.
+
+    An unanswered question is BLANK, never "no". The survey records a keypress; a
+    question nobody answered has no answer, and showing it as "no" would turn a call
+    that reached a voicemail into four complaints about a hospital.
+    """
+    output = doc.get("feedback_output") or {}
+    patient = doc.get("patient_context") or {}
+    survey = doc.get("survey") or {}
+
+    timestamp = doc.get("timestamp")
+    received = _first(output, "Received Time")
+    if not received and isinstance(timestamp, datetime):
+        received = iso_utc(timestamp)
+
+    row: dict[str, Any] = {
+        "Phone Number": _first(output, "Phone Number", "Contact Number")
+        or _first(patient, "contact_number", "caller", "caller_number")
+        or doc.get("caller_number", ""),
+        "Received Time": received,
+        "Disposition Catg": _first(output, "Disposition Catg", "Disposition Category")
+        or _first(patient, "disposition_category"),
+        "Patient Category": _first(output, "Patient Category")
+        or _first(patient, "patient_category"),
+        "ER name": _first(output, "ER name", "ER Name") or _first(patient, "er_name"),
+        "MR Number": _first(output, "MR Number") or _first(patient, "mr_number"),
+        "Patient Name": _first(output, "Patient Name") or _first(patient, "patient_name"),
+    }
+    for field, heading in SURVEY_QUESTIONS:
+        answer = str(survey.get(field) or "")
+        # "Yes"/"No" rather than the stored lower case or the raw digit: this is a
+        # column someone reads, and a column of 1s and 2s needs the script beside it.
+        row[heading] = answer.capitalize()
+    row["Questions Answered"] = f"{len(survey)} of {len(SURVEY_QUESTIONS)}"
+    return row
+
+
 def to_report_row(doc: dict[str, Any]) -> dict[str, Any]:
     """Flatten one conversation-log document into a single report row.
 
     Reads from feedback_output first (written at call end), then falls back to
     feedback_summary and patient_context so older records still populate.
     """
+    if is_survey(doc):
+        # A survey has no remark and no complaint category. Running it through the rest
+        # of this function would fill those columns from empty fields and present the
+        # result as a feedback record.
+        return to_survey_row(doc)
+
     output = doc.get("feedback_output") or {}
     summary = doc.get("feedback_summary") or {}
     patient = doc.get("patient_context") or {}
@@ -349,6 +430,13 @@ def to_call_summary(doc: dict[str, Any], tariff: Tariff | None = None) -> dict[s
         "is_valid_feedback": bool(summary.get("is_valid_feedback")),
         "invalid_feedback_category": summary.get("invalid_feedback_category", ""),
         "support_required": bool(summary.get("support_required")),
+        # Which campaign placed this call, so the table knows which columns to render
+        # and a reader is never left guessing why the complaint fields are empty.
+        "campaign": "robocall" if is_survey(doc) else "ai",
+        # The raw answers as well as the report row: the row is formatted for reading,
+        # these are for counting.
+        "survey": doc.get("survey") or {},
+        "answered_count": int(doc.get("answered_count") or 0),
         "report": row,
     }
 

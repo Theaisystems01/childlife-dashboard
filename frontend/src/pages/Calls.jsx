@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, fetchBlobUrl } from "../lib/api";
 import { PK_TIME_ZONE, formatWhen } from "../lib/time";
-import { Badge, Button, Card, EmptyState, Field, Input, MultiSelect, Pagination, Segmented, Select, Skeleton } from "../components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, MultiSelect, Pagination, Segmented, Select, Skeleton, Stat, StatStrip } from "../components/ui";
 
+// The feedback report's columns, used until /api/calls/filters answers with the real
+// list. The server owns the column order per campaign — a survey has four answer
+// columns and no Remarks — and this is only what the first paint shows.
 const COLUMNS = [
   "Phone Number",
   "Received Time",
@@ -17,6 +20,68 @@ const COLUMNS = [
   "Complaint Sub Category",
   "Area",
 ];
+
+/** A survey answer reads as a word, so colour it rather than leaving four grey columns. */
+function AnswerCell({ value }) {
+  if (!value) {
+    // Not "No". The family never answered this question, and showing it as a complaint
+    // is exactly the mistake the client caught us making on the AI calls.
+    return <span style={{ color: "var(--text-muted)" }} title="Not answered">—</span>;
+  }
+  // The word is in the badge, so the meaning never rests on colour alone.
+  return <Badge tone={value === "Yes" ? "good" : "critical"}>{value}</Badge>;
+}
+
+/** Per-question results for the survey, above the table. The whole point of the campaign. */
+function SurveySummary({ stats }) {
+  if (!stats) return <Skeleton className="h-28" />;
+  const { kpis, questions } = stats;
+  return (
+    <Card
+      title="Survey results"
+      subtitle="Each percentage is of the families who answered that question — never of everyone called"
+    >
+      <StatStrip>
+        <Stat label="Calls placed" value={kpis.total_calls} />
+        <Stat label="Answered" value={kpis.connected} />
+        <Stat label="All four answered" value={kpis.completed} hint={`${kpis.completion_rate}% of those who picked up`} />
+        <Stat label="Answered nothing" value={kpis.no_response} hint="voicemail, or nobody holding the phone" />
+      </StatStrip>
+      <div className="-mx-5 mt-4 overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border)" }}>
+              {["Question", "Yes", "No", "No answer", "% Yes"].map((h, i) => (
+                <th
+                  key={h}
+                  className={`px-3 py-2.5 font-medium whitespace-nowrap ${i ? "text-right" : "text-left"}`}
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {questions.map((q) => (
+              <tr key={q.field} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td className="px-3 py-2.5">{q.question}</td>
+                <td className="tnum px-3 py-2.5 text-right">{q.yes}</td>
+                <td className="tnum px-3 py-2.5 text-right">{q.no}</td>
+                <td className="tnum px-3 py-2.5 text-right" style={{ color: "var(--text-muted)" }}>
+                  {q.no_answer}
+                </td>
+                <td className="tnum px-3 py-2.5 text-right font-medium">
+                  {q.percent_yes === null ? "—" : `${q.percent_yes}%`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
 
 /** Did we reach the number, and on which try. */
 
@@ -173,12 +238,20 @@ function pkr(value) {
 const pkToday = () => new Date().toLocaleDateString("en-CA", { timeZone: PK_TIME_ZONE });
 
 export default function Calls({ filters }) {
-  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "", batches: [], latest_only: false });
+  const [query, setQuery] = useState({ search: "", status: "", caller_input: "", category: "", er: "", days: null, date_from: "", date_to: "", batches: [], latest_only: false, campaign: "ai" });
   const [debounced, setDebounced] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [surveyStats, setSurveyStats] = useState(null);
+
+  const survey = query.campaign === "robocall";
+  // The server owns the column order for each campaign; COLUMNS is only the fallback
+  // for the first paint, before /filters has answered.
+  const columns = filters?.columns?.[query.campaign] || COLUMNS;
+  // Named by the server, so the question list lives in exactly one place.
+  const answerColumns = new Set(filters?.answer_columns || []);
 
   // Debounce the search box so each keystroke isn't a round trip.
   useEffect(() => {
@@ -186,7 +259,7 @@ export default function Calls({ filters }) {
     return () => clearTimeout(t);
   }, [query.search]);
 
-  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to, query.batches, query.latest_only]);
+  useEffect(() => setPage(1), [debounced, query.status, query.caller_input, query.category, query.er, query.date_from, query.date_to, query.batches, query.latest_only, query.campaign]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,7 +271,25 @@ export default function Calls({ filters }) {
     return () => {
       cancelled = true;
     };
-  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, query.batches, query.latest_only, page]);
+  }, [debounced, query.status, query.caller_input, query.category, query.er, query.days, query.date_from, query.date_to, query.batches, query.latest_only, query.campaign, page]);
+
+  // Per-question results, fetched only in survey mode — the feedback view has no use
+  // for them and should not pay for the query.
+  useEffect(() => {
+    if (!survey) {
+      setSurveyStats(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setSurveyStats(null);
+    api
+      .surveyStats({ er: query.er, days: query.days, batches: query.batches })
+      .then((d) => !cancelled && setSurveyStats(d))
+      .catch(() => !cancelled && setSurveyStats(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [survey, query.er, query.days, query.batches]);
 
   const set = (key) => (value) => setQuery((q) => ({ ...q, [key]: value }));
 
@@ -214,6 +305,28 @@ export default function Calls({ filters }) {
   return (
     <div className="flex flex-col gap-5">
       <Card>
+        {/* First control on the page, because it decides what every other one means:
+            a survey call has no complaint category and no remark, so the filters and
+            the columns below are not the same set in the two modes. */}
+        {(filters?.campaigns?.length || 0) > 1 && (
+          <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Segmented
+              label="Campaign"
+              value={query.campaign}
+              onChange={set("campaign")}
+              options={filters.campaigns.map((c) => ({
+                label: `${c.label}${c.calls ? ` · ${c.calls.toLocaleString()}` : ""}`,
+                value: c.value,
+              }))}
+            />
+            <span className="text-[12.5px]" style={{ color: "var(--text-muted)" }}>
+              {survey
+                ? "Four keypress questions. No conversation, no recording, no AI cost."
+                : "The AI feedback interview: a complaint in the family's own words."}
+            </span>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[230px] flex-1">
             <Field label="Search">
@@ -226,8 +339,15 @@ export default function Calls({ filters }) {
           </div>
 
           <Select label="Status" value={query.status} onChange={set("status")} options={filters?.statuses || []} />
-          <Select label="Input" value={query.caller_input} onChange={set("caller_input")} options={filters?.inputs || []} />
-          <Select label="Category" value={query.category} onChange={set("category")} options={filters?.categories || []} />
+          {/* Input and Category describe one keypress and one complaint. A survey has
+              four keypresses and no complaint, so offering these would filter every
+              row away and look like missing data. */}
+          {!survey && (
+            <>
+              <Select label="Input" value={query.caller_input} onChange={set("caller_input")} options={filters?.inputs || []} />
+              <Select label="Category" value={query.category} onChange={set("category")} options={filters?.categories || []} />
+            </>
+          )}
           <Select label="ER" value={query.er} onChange={set("er")} options={filters?.ers || []} />
           <MultiSelect
             label="Upload"
@@ -284,12 +404,16 @@ export default function Calls({ filters }) {
         </div>
       </Card>
 
+      {survey && <SurveySummary stats={surveyStats} />}
+
       <Card
-        title={`${query.latest_only ? "Numbers called" : "Call records"}${data ? ` · ${data.total}` : ""}`}
+        title={`${query.latest_only ? "Numbers called" : survey ? "Survey calls" : "Call records"}${data ? ` · ${data.total}` : ""}`}
         subtitle={
           query.latest_only
             ? "One row per number, showing its latest call — newest first"
-            : "The foundation reporting format, newest first"
+            : survey
+              ? "One row per call, with each question's answer — newest first"
+              : "The foundation reporting format, newest first"
         }
       >
         {!data ? (
@@ -308,10 +432,16 @@ export default function Calls({ filters }) {
                       second is whether the family engaged. Merged, a silent answer
                       looked the same as a dead number. */}
                   <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Status</th>
-                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Input</th>
-                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>AI time</th>
-                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Cost</th>
-                  {COLUMNS.map((c) => (
+                  {/* A survey has no single keypress, no model time and no AI cost, so
+                      these three columns would be a dash on every row. */}
+                  {!survey && (
+                    <>
+                      <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Input</th>
+                      <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>AI time</th>
+                      <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>Cost</th>
+                    </>
+                  )}
+                  {columns.map((c) => (
                     <th key={c} className="px-3 py-2.5 text-left font-medium whitespace-nowrap" style={{ color: "var(--text-muted)" }}>
                       {c}
                     </th>
@@ -329,37 +459,47 @@ export default function Calls({ filters }) {
                     <td className="px-3 py-2.5 whitespace-nowrap">
                       <ConnectionBadge connection={row.connection} attempt={row.attempt} />
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <InputBadge input={row.caller_input} connected={row.connection === "Answered"} />
-                    </td>
-                    <td
-                      className="tnum px-3 py-2.5 whitespace-nowrap"
-                      style={{ color: row.ai_minutes ? "var(--text-primary)" : "var(--text-muted)" }}
-                      title={row.ai_engaged ? "Minutes spent with the AI" : "IVR only — no AI, no model cost"}
-                    >
-                      {row.ai_engaged ? formatDuration(row.ai_minutes) : "—"}
-                    </td>
-                    <td
-                      className="tnum px-3 py-2.5 whitespace-nowrap"
-                      style={{ color: row.cost_pkr ? "var(--text-primary)" : "var(--text-muted)" }}
-                      title={
-                        row.cost_pkr_breakdown
-                          ? `carrier ${row.cost_pkr_breakdown.carrier} + menu ${row.cost_pkr_breakdown.ivr} + AI ${row.cost_pkr_breakdown.ai}`
-                          : ""
-                      }
-                    >
-                      {row.connection === "Answered" ? pkr(row.cost_pkr) : "—"}
-                    </td>
-                    {COLUMNS.map((c) => (
+                    {!survey && (
+                      <>
+                        <td className="px-3 py-2.5 whitespace-nowrap">
+                          <InputBadge input={row.caller_input} connected={row.connection === "Answered"} />
+                        </td>
+                        <td
+                          className="tnum px-3 py-2.5 whitespace-nowrap"
+                          style={{ color: row.ai_minutes ? "var(--text-primary)" : "var(--text-muted)" }}
+                          title={row.ai_engaged ? "Minutes spent with the AI" : "IVR only — no AI, no model cost"}
+                        >
+                          {row.ai_engaged ? formatDuration(row.ai_minutes) : "—"}
+                        </td>
+                        <td
+                          className="tnum px-3 py-2.5 whitespace-nowrap"
+                          style={{ color: row.cost_pkr ? "var(--text-primary)" : "var(--text-muted)" }}
+                          title={
+                            row.cost_pkr_breakdown
+                              ? `carrier ${row.cost_pkr_breakdown.carrier} + menu ${row.cost_pkr_breakdown.ivr} + AI ${row.cost_pkr_breakdown.ai}`
+                              : ""
+                          }
+                        >
+                          {row.connection === "Answered" ? pkr(row.cost_pkr) : "—"}
+                        </td>
+                      </>
+                    )}
+                    {columns.map((c) => (
                       <td
                         key={c}
                         className={`px-3 py-2.5 ${c === "Remarks" ? "max-w-[280px] truncate" : "whitespace-nowrap"} ${
-                          ["Phone Number", "MR Number", "Received Time"].includes(c) ? "tnum" : ""
+                          ["Phone Number", "MR Number", "Received Time", "Questions Answered"].includes(c) ? "tnum" : ""
                         }`}
                         style={{ color: row.report[c] ? "var(--text-primary)" : "var(--text-muted)" }}
                         title={row.report[c] || ""}
                       >
-                        {c === "Received Time" ? formatWhen(row.report[c]) : row.report[c] || "—"}
+                        {c === "Received Time" ? (
+                          formatWhen(row.report[c])
+                        ) : answerColumns.has(c) ? (
+                          <AnswerCell value={row.report[c]} />
+                        ) : (
+                          row.report[c] || "—"
+                        )}
                       </td>
                     ))}
                   </tr>
@@ -434,7 +574,13 @@ function CallDetail({ sessionId, onClose }) {
             <div className="shrink-0 border-b px-5 py-4" style={{ borderColor: "var(--border)" }}>
               <div className="mb-4 flex flex-wrap items-center gap-2">
                 <ConnectionBadge connection={call.connection} attempt={call.attempt} />
-                <InputBadge input={call.caller_input} connected={call.connection === "Answered"} />
+                {call.campaign === "robocall" ? (
+                  <Badge tone={call.answered_count === 4 ? "good" : call.answered_count ? "warning" : "neutral"}>
+                    {call.answered_count} of 4 answered
+                  </Badge>
+                ) : (
+                  <InputBadge input={call.caller_input} connected={call.connection === "Answered"} />
+                )}
                 <Badge tone="accent">{call.direction}</Badge>
                 {call.patient_matched && <Badge tone="good">✓ patient matched</Badge>}
                 {call.support_required && <Badge tone="critical">follow-up needed</Badge>}
@@ -447,7 +593,10 @@ function CallDetail({ sessionId, onClose }) {
               />
 
               <dl className="grid grid-cols-[minmax(120px,auto)_1fr] gap-x-4 gap-y-1.5 text-[13px]">
-                {COLUMNS.map((c) => (
+                {/* The record's own columns, in its own order — a survey's report has
+                    four answers where a feedback call has a remark and a category, and
+                    this panel is opened from both. */}
+                {Object.keys(call.report || {}).map((c) => (
                   <div key={c} className="contents">
                     <dt style={{ color: "var(--text-muted)" }}>{c}</dt>
                     <dd className={["Phone Number", "MR Number"].includes(c) ? "tnum" : ""} style={{ color: call.report[c] ? "var(--text-primary)" : "var(--text-muted)" }}>

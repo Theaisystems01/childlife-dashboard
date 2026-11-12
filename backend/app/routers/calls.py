@@ -19,6 +19,9 @@ from ..reporting import (
     NO_COMPLAINT_REASONS,
     OUTCOME_EXPR,
     PHONE_KEY_EXPR,
+    REPORT_COLUMNS,
+    SURVEY_COLUMNS,
+    SURVEY_QUESTIONS,
     extract_transcript,
     to_call_summary,
 )
@@ -45,10 +48,26 @@ def build_filter(
     date_to: date | None = None,
     caller_input: str | None = None,
     batches: list[str] | None = None,
+    campaign: str | None = None,
 ) -> dict[str, Any]:
     # Archived records stay in Mongo but are invisible to the dashboard. Used to clear
     # test and demo history without destroying it — unset the flag and it comes back.
     query: dict[str, Any] = {"archived": {"$ne": True}}
+
+    # Which campaign's calls to show. Two campaigns share this collection: the AI
+    # feedback interview and the four-question robocall survey.
+    #
+    # The DEFAULT EXCLUDES SURVEYS, and that is deliberate. Every figure on this
+    # dashboard — the Overview counts, the complaint breakdown, the export the
+    # Foundation receives — was built to describe feedback calls. Letting survey calls
+    # fall into them by default would quietly change all of those numbers, and a survey
+    # has no complaint to count. Asking for them is explicit.
+    if campaign == "robocall":
+        query["campaign"] = "robocall"
+    elif campaign == "all":
+        pass
+    else:
+        query["campaign"] = {"$ne": "robocall"}
 
     # Which upload the call came from. Stamped on every record by the dialler, and
     # backfilled onto the earlier ones, so this is a plain field match rather than a
@@ -168,13 +187,15 @@ async def list_calls(
     batches: list[str] | None = Query(None),
     # One row per number instead of one per dial, keeping the newest call on each.
     latest_only: bool = False,
+    # "ai" (default) is the feedback interview, "robocall" the DTMF survey, "all" both.
+    campaign: str | None = None,
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
     _: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     query = build_filter(
         search, status, category, er, direction, days, date_from, date_to, caller_input,
-        batches,
+        batches, campaign,
     )
     collection = calls()
     skip = (page - 1) * limit
@@ -217,13 +238,16 @@ async def list_calls(
 async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     """Distinct values actually present in the data, so filters never offer a dead option."""
     collection = calls()
+    # Feedback calls only. A survey has no complaint and no keypress vocabulary, so
+    # including its rows would put dead values in the Category and Input dropdowns.
+    feedback_only = {"archived": {"$ne": True}, "campaign": {"$ne": "robocall"}}
     ers = set(await collection.distinct("patient_context.er_name")) | set(
         await collection.distinct("feedback_output.ER name")
     )
     inputs: dict[str, int] = {}
     async for row in collection.aggregate(
         [
-            {"$match": {"archived": {"$ne": True}}},
+            {"$match": feedback_only},
             {"$group": {"_id": INPUT_LABEL_EXPR, "count": {"$sum": 1}}},
         ]
     ):
@@ -234,7 +258,7 @@ async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str,
     batch_options: list[dict[str, Any]] = []
     async for row in collection.aggregate(
         [
-            {"$match": {"archived": {"$ne": True}, "source_file": {"$nin": [None, ""]}}},
+            {"$match": {**feedback_only, "source_file": {"$nin": [None, ""]}}},
             {"$group": {"_id": "$source_file", "calls": {"$sum": 1},
                         "latest": {"$max": "$timestamp"}}},
             {"$sort": {"latest": -1}},
@@ -246,7 +270,7 @@ async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str,
     outcomes: set[str] = set()
     async for row in collection.aggregate(
         [
-            {"$match": {"archived": {"$ne": True}}},
+            {"$match": feedback_only},
             {"$group": {"_id": OUTCOME_EXPR}},
         ]
     ):
@@ -272,6 +296,24 @@ async def filter_options(_: dict[str, Any] = Depends(current_user)) -> dict[str,
         # Newest upload first, which is the order they are thought about, and with the
         # call count so an upload that produced nothing is obvious rather than puzzling.
         "batches": batch_options,
+        # The two campaigns, and how many calls each has. The survey option is listed
+        # with a zero count rather than hidden when none have been placed, so it is
+        # discoverable before the first campaign runs rather than appearing from nowhere
+        # afterwards.
+        "campaigns": [
+            {"value": "ai", "label": "Feedback calls",
+             "calls": await collection.count_documents(feedback_only)},
+            {"value": "robocall", "label": "Robocall survey",
+             "calls": await collection.count_documents(
+                 {"archived": {"$ne": True}, "campaign": "robocall"}
+             )},
+        ],
+        # Column order per campaign, so the table does not carry its own copy of a
+        # list that is defined in reporting.py.
+        "columns": {"ai": REPORT_COLUMNS, "robocall": SURVEY_COLUMNS},
+        # Which of those columns hold a yes/no answer, so the table can render them as
+        # badges without keeping its own copy of the question list.
+        "answer_columns": [heading for _, heading in SURVEY_QUESTIONS],
     }
 
 

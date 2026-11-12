@@ -11,7 +11,13 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from ..db import calls
-from ..reporting import REPORT_COLUMNS, connection_label, input_label, to_report_row
+from ..reporting import (
+    REPORT_COLUMNS,
+    SURVEY_COLUMNS,
+    connection_label,
+    input_label,
+    to_report_row,
+)
 from ..security import current_user
 from .calls import build_filter, latest_per_number
 
@@ -52,6 +58,11 @@ def _to_pkt_excel(value: Any) -> Any:
 # without this there is no way to tell the retry from the original.
 EXPORT_COLUMNS = ["Status", "Input", "Attempt", *REPORT_COLUMNS]
 
+# The survey sheet has no Input column: "which key they pressed" is not one answer on a
+# survey call, it is four, and they are the columns of the sheet. Status and Attempt
+# still qualify the row the same way.
+SURVEY_EXPORT_COLUMNS = ["Status", "Attempt", *SURVEY_COLUMNS]
+
 XLSX_MEDIA_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
@@ -74,31 +85,38 @@ async def export_xlsx(
     # One row per number instead of one per dial, as on the screen this exports.
     latest_only: bool = False,
     complaints_only: bool = False,
+    # Which campaign to export, matching the switch on the screen.
+    campaign: str | None = None,
     _: dict[str, Any] = Depends(current_user),
 ) -> StreamingResponse:
     """Export the current view in the foundation's exact report column order."""
     query = build_filter(
         search, status, category, er, direction, days, date_from, date_to, caller_input,
-        batches,
+        batches, campaign,
     )
+    survey = campaign == "robocall"
+    columns = SURVEY_EXPORT_COLUMNS if survey else EXPORT_COLUMNS
     if complaints_only:
-        query["feedback_summary.is_valid_feedback"] = True
+        # Meaningless on a survey — there is no complaint flag to filter on — and
+        # applying it would return an empty sheet rather than saying why.
+        if not survey:
+            query["feedback_summary.is_valid_feedback"] = True
 
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "Feedback Report"
+    sheet.title = "Survey Answers" if survey else "Feedback Report"
 
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="1C5CAB")
-    sheet.append(EXPORT_COLUMNS)
+    sheet.append(columns)
     for cell in sheet[1]:
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    time_column = EXPORT_COLUMNS.index("Received Time") + 1
+    time_column = columns.index("Received Time") + 1
 
-    widths = [len(column) for column in EXPORT_COLUMNS]
+    widths = [len(column) for column in columns]
     row_number = 1
     # Both cursors yield the same shape of document, newest first; the only difference
     # is whether a number's earlier attempts are in it. The sheet has to agree with the
@@ -113,9 +131,11 @@ async def export_xlsx(
             "Status": connection_label(doc),
             "Input": input_label(doc),
             "Attempt": int(doc.get("attempt") or 1),
+            # to_report_row returns survey columns for a survey call and feedback
+            # columns otherwise, so this one line covers both sheets.
             **to_report_row(doc),
         }
-        values = [row.get(column, "") for column in EXPORT_COLUMNS]
+        values = [row.get(column, "") for column in columns]
         values[time_column - 1] = _to_pkt_excel(values[time_column - 1])
         sheet.append(values)
         row_number += 1
@@ -137,7 +157,8 @@ async def export_xlsx(
     workbook.save(buffer)
     buffer.seek(0)
 
-    filename = f"childlife-feedback-{datetime.now(PKT):%Y%m%d-%H%M}.xlsx"
+    kind = "survey" if survey else "feedback"
+    filename = f"childlife-{kind}-{datetime.now(PKT):%Y%m%d-%H%M}.xlsx"
     return StreamingResponse(
         buffer,
         media_type=XLSX_MEDIA_TYPE,
