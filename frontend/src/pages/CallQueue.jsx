@@ -307,6 +307,18 @@ function Upload({ onDone }) {
         const r = await api.uploadPatients(file, { recallExisting, ignoreColumnCheck, campaign });
         setResult(r);
         setRejected(null);
+        // The server says which campaign it actually imported. If that is not the one
+        // on screen, say so loudly instead of showing a successful upload: the rows are
+        // already stamped and the dialler will act on them, so the only thing left to
+        // do is tell someone while it still matters. Guards the whole class of bug, not
+        // just the stale closure that caused it once.
+        if (r.campaign !== campaign) {
+          setError(
+            `This sheet was imported as ${r.campaign === "robocall" ? "the robocall survey" : "feedback calls"}, ` +
+            `not ${campaign === "robocall" ? "the robocall survey" : "feedback calls"} as selected. ` +
+            `Reload the page and upload it again before the dialler reaches these numbers.`,
+          );
+        }
         onDone?.();
       } catch (e) {
         const message = e.message || "Upload failed";
@@ -319,7 +331,13 @@ function Upload({ onDone }) {
         setBusy(false);
       }
     },
-    [onDone, recallExisting],
+    // `campaign` MUST be in here. Left out, this callback closed over the value from
+    // the render that created it: the toggle showed "Robocall survey", the state said
+    // robocall, and the upload posted the stale "ai" — so two sheets went out as
+    // feedback calls on 2026-11-12 with the control visibly set to survey. It appeared
+    // to work intermittently, because changing the new-round radio recreated the
+    // callback and picked the campaign up by accident.
+    [onDone, recallExisting, campaign],
   );
 
   return (
