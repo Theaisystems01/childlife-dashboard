@@ -209,7 +209,9 @@ async def upload(
     file: UploadFile = File(...),
     recall_existing: bool = Form(True),
     ignore_column_check: bool = Form(False),
-    campaign: str = Form("ai"),
+    # No default. See the check below: a silent default here placed the wrong kind of
+    # call to a real family on 2026-11-12.
+    campaign: str | None = Form(None),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     """Import patients from an .xlsx sheet.
@@ -288,9 +290,29 @@ async def upload(
             ),
         )
 
-    # Rejected rather than defaulted: silently importing a survey round as feedback
-    # calls would ring families with the wrong call entirely, and the upload summary
-    # would say nothing about it.
+    # An absent field is refused, not assumed.
+    #
+    # It defaulted to "ai" when this was written, and on 2026-11-12 a browser tab
+    # loaded before the campaign control shipped posted an upload without the field.
+    # The default took it, the dialler rang the family with the AI feedback interview
+    # instead of the survey that was intended, and nothing anywhere said so — the
+    # upload summary reported a successful import, because it was one.
+    #
+    # There is no safe assumption available here. Guessing "ai" rings families with
+    # the wrong call; guessing "robocall" does the same in the other direction. So the
+    # upload stops and asks, and the message says what to do about it, because the
+    # likely cause is a page that has been open since before a deploy.
+    # `not isinstance(str)` as well as None: over HTTP FastAPI resolves the default to
+    # None, but a direct call leaves the Form object itself, and that must give the same
+    # answer rather than falling through to the "unknown campaign" message below.
+    if campaign is None or not isinstance(campaign, str) or not campaign.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="This page is out of date and did not say which call to place. "
+                   "Reload it (Ctrl+Shift+R, or Cmd+Shift+R on a Mac), choose under "
+                   "'Which call' whether this sheet is for feedback calls or the "
+                   "robocall survey, and upload it again. Nothing was imported.",
+        )
     if campaign not in CAMPAIGNS:
         raise HTTPException(
             status_code=400,
